@@ -1,0 +1,26 @@
+{
+  "categoryCode": "IDENTITY",
+  "description": "Government-issued identity document extraction",
+  "fields": [
+    {
+      "fieldName": "full_name",
+      "pattern": "(?:name|full name)[:\\s]+([A-Z][a-z]+(?:\\s[A-Z][a-z]+)+)",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "document_number",
+      "pattern": "(?:licence no|license no|dl no|passport no|id no|document no)[:\\s#]*([A-Z0-9]{5,15})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "date_of_birth",
+      "pattern": "(?:date of birth|dob|born)[:\\s]*(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "expiry_date",
+      "pattern": "(?:expiry|expires|expiration|exp)[:\\s]*(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4})",
+      "defaultValue": ""
+    }
+  ]
+}

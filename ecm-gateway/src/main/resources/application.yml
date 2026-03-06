@@ -1,0 +1,167 @@
+server:
+  port: 8080
+  # Increase Netty connection timeout for large file uploads
+  netty:
+    connection-timeout: 30s
+
+spring:
+  application:
+    name: ecm-gateway
+
+  # ── Redis (rate limiting) ──────────────────────────────────────────────────
+  data:
+    redis:
+      host:     ${REDIS_HOST:localhost}
+      port:     ${REDIS_PORT:6379}
+      password: ${REDIS_PASS:ecmredispassword}
+      timeout:  2000ms
+      # Reactive Lettuce connection pool
+      lettuce:
+        pool:
+          max-active:  10
+          max-idle:    5
+          min-idle:    2
+
+  # ── OAuth2 Resource Server ─────────────────────────────────────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OKTA_ISSUER_URI:https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697}
+
+  # ── Cloud Gateway ─────────────────────────────────────────────────────────
+  cloud:
+    gateway:
+      # Global timeout for all downstream calls
+      httpclient:
+        connect-timeout: 5000    # 5 seconds to establish connection
+        response-timeout: 60s    # 60 seconds for response (covers large uploads)
+        # Connection pool — shared across all downstream routes
+        pool:
+          max-connections:          500
+          acquire-timeout:          45000
+          max-idle-time:            20s
+          max-life-time:            60s
+
+      # Default filters applied to EVERY route
+      default-filters:
+        # Retry on 503 (service briefly unavailable) — only safe for GET
+        - name: Retry
+          args:
+            retries:    2
+            statuses:   SERVICE_UNAVAILABLE
+            methods:    GET
+            backoff:
+              firstBackoff:   100ms
+              maxBackoff:     500ms
+              factor:         2
+
+      # ── CORS ──────────────────────────────────────────────────────────────
+      # CORS is handled exclusively in GatewaySecurityConfig via the reactive
+      # CorsConfigurationSource bean. The globalcors yaml block is intentionally
+      # absent here — having both active causes the gateway to write
+      # Access-Control-Allow-Origin twice in the same response, which browsers
+      # reject: "header contains multiple values 'http://localhost:3000,
+      # http://localhost:3000', but only one is allowed".
+      #
+      # Rule: one CORS owner only.
+      #   GatewaySecurityConfig  → Spring Security layer — handles OPTIONS
+      #                            preflight before routing even runs ✅
+      #   globalcors (removed)   → routing layer — would fire a second time ❌
+
+      # Expose gateway route info on actuator
+      actuator:
+        verbose:
+          enabled: true
+
+# ── Okta ─────────────────────────────────────────────────────────────────────
+okta:
+  oauth2:
+    audience: ${OKTA_AUDIENCE:api://sso-default}
+
+# ── ECM service URLs ──────────────────────────────────────────────────────────
+ecm:
+  services:
+    identity-url:  ${IDENTITY_SERVICE_URL:http://localhost:8081}
+    document-url:  ${DOCUMENT_SERVICE_URL:http://localhost:8082}
+    workflow-url:  ${WORKFLOW_SERVICE_URL:http://localhost:8083}
+    eforms-url:    ${EFORMS_SERVICE_URL:http://localhost:8084}
+    admin-url:     ${ADMIN_SERVICE_URL:http://localhost:8086}
+    ocr-url:     ${OCR_SERVICE_URL:http://localhost:8087}
+  security:
+    # After (comma-separated — @Value splits this correctly)
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
+
+# ── Resilience4j Circuit Breakers ─────────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    configs:
+      # Shared default config for all service circuit breakers
+      default:
+        # Open circuit after 50% failures over last 10 calls
+        slidingWindowType:             COUNT_BASED
+        slidingWindowSize:             10
+        failureRateThreshold:          50
+        # Wait 30 seconds before trying again (half-open state)
+        waitDurationInOpenState:       30s
+        # Allow 2 test calls when half-open before deciding to close/reopen
+        permittedNumberOfCallsInHalfOpenState: 2
+        # Count 503 and connection errors as failures
+        recordExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.cloud.gateway.support.NotFoundException
+    instances:
+      identity-cb:
+        baseConfig: default
+      document-cb:
+        baseConfig: default
+      workflow-cb:
+        baseConfig: default
+      eforms-cb:
+        baseConfig: default
+      admin-cb:
+        baseConfig: default
+
+  # Timeout per circuit breaker call (separate from gateway httpclient timeout)
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 30s     # 30s for uploads
+    instances:
+      identity-cb:
+        timeoutDuration: 10s     # Auth should be fast
+      document-cb:
+        timeoutDuration: 60s     # Uploads can take longer
+      workflow-cb:
+        timeoutDuration: 15s
+      eforms-cb:
+        timeoutDuration: 15s
+      admin-cb:
+        timeoutDuration: 15s
+
+# ── Actuator ──────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+  endpoint:
+    health:
+      show-details: when-authorized
+    # Expose route list (useful for debugging, restrict in production)
+    gateway:
+      enabled: true
+  # Include downstream service health in gateway health check
+  health:
+    circuitbreakers:
+      enabled: true
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.ecm.gateway:                          DEBUG
+    org.springframework.cloud.gateway:        INFO
+    org.springframework.security:             INFO
+    reactor.netty.http.client:                WARN
+    io.github.resilience4j.circuitbreaker:    INFO

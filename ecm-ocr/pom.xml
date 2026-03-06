@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.ecm</groupId>
+        <artifactId>ecm-platform</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ecm-ocr</artifactId>
+    <name>ecm-ocr</name>
+    <description>ECM OCR Service — Tika extraction, OpenSearch indexing. Port 8087.</description>
+
+    <dependencies>
+
+        <!--
+            ecm-common transitively provides (DO NOT re-declare):
+              spring-boot-starter-{web, security, oauth2-resource-server,
+                                   aop, validation, actuator, data-jpa}
+              jackson-databind, mapstruct
+            Root pom provides for ALL modules (DO NOT re-declare):
+              lombok, spring-boot-starter-test
+        -->
+        <dependency>
+            <groupId>com.ecm</groupId>
+            <artifactId>ecm-common</artifactId>
+            <!-- version managed by root pom -->
+        </dependency>
+
+        <!-- ── Database — JDBC only, no Flyway, no owned schema ──── -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!--
+            ecm-common brings data-jpa; we declare jdbc explicitly
+            to make the JdbcTemplate dependency visible and intentional.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+
+        <!-- ── Messaging ──────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- ── MinIO — version ${minio.version} from root pom ────── -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <!-- NO version — root pom manages this -->
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <!-- NO version — root pom manages this -->
+        </dependency>
+
+        <!-- ── Apache Tika — version ${tika.version} from root pom ─ -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <!-- NO version — added to root pom in Fix 1 -->
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+        </dependency>
+
+        <!-- ── OpenSearch — ${opensearch.version} from root pom ──── -->
+        <!--
+            spring-data-opensearch-starter is what root pom manages.
+            It pulls opensearch-rest-high-level-client transitively.
+            Do NOT declare opensearch-rest-high-level-client separately
+            — it would create a version conflict with the starter.
+        -->
+        <dependency>
+            <groupId>org.opensearch.client</groupId>
+            <artifactId>spring-data-opensearch-starter</artifactId>
+            <!-- NO version — root pom manages this -->
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <!-- version inherited from parent — no explicit version -->
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

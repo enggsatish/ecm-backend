@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ecm</groupId>
+        <artifactId>ecm-platform</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ecm-workflow</artifactId>
+    <name>ECM Workflow Service</name>
+    <description>
+        Flowable BPM-based document review workflows. Supports category-based
+        auto-trigger and manual workflow selection. Role-based and group-based
+        task assignment. Port 8083.
+    </description>
+
+    <dependencies>
+
+        <!-- ── Internal ───────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>com.ecm</groupId>
+            <artifactId>ecm-common</artifactId>
+        </dependency>
+
+        <!-- ── Database ───────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!-- ── Flowable BPM ───────────────────────────────────────────── -->
+        <!--
+            flowable-spring-boot-starter pulls in:
+              - process engine (core BPM runtime)
+              - history service
+              - task service
+              - repository service (BPMN deployment)
+            We disable IDM engine — Okta handles identity.
+        -->
+        <dependency>
+            <groupId>org.flowable</groupId>
+            <artifactId>flowable-spring-boot-starter</artifactId>
+            <version>${flowable.version}</version>
+            <exclusions>
+                <!-- Exclude Flowable's own Spring Security integration
+                     to avoid conflicts with ecm-common's SecurityConfig -->
+                <exclusion>
+                    <groupId>org.flowable</groupId>
+                    <artifactId>flowable-spring-security</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- ── Messaging ──────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- ── MapStruct ──────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+
+        <!-- ── Testing ────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

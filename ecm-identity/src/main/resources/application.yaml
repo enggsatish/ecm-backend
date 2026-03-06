@@ -1,0 +1,88 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: ecm-identity-service
+
+  # ── RabbitMQ ──────────────────────────────────────────────────────────────
+  rabbitmq:
+    host:         ${RABBITMQ_HOST:localhost}
+    port:         ${RABBITMQ_PORT:5672}
+    username:     ${RABBITMQ_USER:ecmrabbit}
+    password:     ${RABBITMQ_PASS:ecmrabbitpassword}
+    virtual-host: ${RABBITMQ_VHOST:ecm}
+
+  # ── Database ───────────────────────────────────────────────────────────────
+  datasource:
+    url:                  jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ecmdb}
+    username:             ${DB_USER:ecmuser}
+    password:             ${DB_PASS:ecmpassword}
+    driver-class-name:    org.postgresql.Driver
+    hikari:
+      pool-name:          IdentityPool
+      maximum-pool-size:  10
+      minimum-idle:       2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema:   ecm_core
+        dialect:          org.hibernate.dialect.PostgreSQLDialect
+    show-sql:             false
+    open-in-view:         false
+
+  # ── Flyway ─────────────────────────────────────────────────────────────────
+  flyway:
+    enabled:              true
+    locations:            classpath:db/migration
+    default-schema:       ecm_core
+    schemas:              ecm_core,ecm_audit,ecm_forms
+    baseline-on-migrate:  true
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  data:
+    redis:
+      host:     ${REDIS_HOST:localhost}
+      port:     ${REDIS_PORT:6379}
+      password: ${REDIS_PASS:ecmredispassword}
+      timeout:  2000ms
+  session:
+    store-type: redis
+    timeout:    8h
+
+  # ── OAuth2 resource server ─────────────────────────────────────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OKTA_ISSUER_URI:https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697}
+
+# ── Okta application credentials ────────────────────────────────────────────
+# client-secret MUST be provided via environment variable in production.
+# Never commit real secrets to source control.
+# Local dev: set in IntelliJ run config → Environment variables, or .env file.
+okta:
+  oauth2:
+    issuer:        ${OKTA_ISSUER_URI:https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697}
+    client-id:     ${OKTA_CLIENT_ID:0oa10hizw04XI3CCt698}
+    client-secret: ${OKTA_CLIENT_SECRET:REPLACE_IN_ENV_NEVER_COMMIT}
+    audience:      ${OKTA_AUDIENCE:api://sso-default}
+
+# ── ECM settings ─────────────────────────────────────────────────────────────
+ecm:
+  security:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
+
+# ── Actuator ─────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized

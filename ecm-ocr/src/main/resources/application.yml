@@ -1,0 +1,125 @@
+spring:
+  application:
+    name: ecm-ocr
+
+  # ── Database ──────────────────────────────────────────────────────
+  # ecm-ocr uses JdbcTemplate only (cross-schema to ecm_core.documents).
+  # ecm-common brings data-jpa transitively — configure it passive.
+  datasource:
+    url:               jdbc:postgresql://localhost:5432/ecmdb
+    username:          ecmuser
+    password:          ecmpassword
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name:         OcrServicePool
+      maximum-pool-size: 4
+      minimum-idle:      1
+  opensearch:
+    uris: ${OPENSEARCH_URIS:http://localhost:9200}
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    show-sql:     false
+    open-in-view: false
+
+  flyway:
+    enabled: false
+
+  # ── RabbitMQ ────────────────────────────────────────────────────
+  # No listener.simple block — ackMode set in @RabbitListener only.
+  rabbitmq:
+    host:         localhost
+    port:         5672
+    username:     ecmrabbit
+    password:     ecmrabbitpassword
+    virtual-host: ecm
+
+  # ── OAuth2 — read by ecm-common SecurityConfig ──────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697
+
+server:
+  port: 8087
+
+# ── Okta audience — read by ecm-common AudienceValidator ─────────
+okta:
+  oauth2:
+    audience: api://sso-default
+
+# ── ECM module config ───────────────────────────────────────────────
+ecm:
+  minio:
+    endpoint:         ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key:       ${MINIO_ACCESS_KEY:ecmminioadmin}
+    secret-key:       ${MINIO_SECRET_KEY:ecmminio@password123}
+    documents-bucket: ${MINIO_BUCKET:ecm-documents}
+
+  opensearch:
+    index-name: ecm-documents
+
+  ocr:
+    max-file-size-bytes: 52428800   # 50 MB
+    tesseract-enabled:   true
+    tesseract-languages: eng
+
+  # Required by ecm-common SecurityConfig (CorsConfigurationSource)
+  security:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.ecm.ocr:                  DEBUG
+    org.apache.tika:              WARN
+    org.springframework.security: INFO
+
+# ── Azure profile — override only what changes in production ────────
+# Pattern from ecm-admin/application.yml
+---
+spring:
+  config:
+    activate:
+      on-profile: azure
+  datasource:
+    url:      ${AZURE_DB_URL}
+    username: ${AZURE_DB_USER}
+    password: ${AZURE_DB_PASS}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OKTA_ISSUER_URI}
+  rabbitmq:
+    host:         ${RABBITMQ_HOST}
+    port:         ${RABBITMQ_PORT:5672}
+    username:     ${RABBITMQ_USER}
+    password:     ${RABBITMQ_PASS}
+    virtual-host: ${RABBITMQ_VHOST:ecm}
+okta:
+  oauth2:
+    audience: ${OKTA_AUDIENCE}
+ecm:
+  minio:
+    endpoint:   ${MINIO_ENDPOINT}
+    access-key: ${MINIO_ACCESS_KEY}
+    secret-key: ${MINIO_SECRET_KEY}
+  opensearch:
+    host: ${OPENSEARCH_HOST}
+    port: ${OPENSEARCH_PORT:9200}
+  security:
+    allowed-origins: ${CORS_ORIGINS}

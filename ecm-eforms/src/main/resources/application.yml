@@ -1,0 +1,140 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: ecm-eforms
+
+  datasource:
+    url:      jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/ecmdb
+    username: ${DB_USER:ecmuser}
+    password: ${DB_PASS:ecmpassword}
+    hikari:
+      pool-name:          EFormsPool
+      maximum-pool-size:  20
+      minimum-idle:        5
+      connection-timeout: 30000
+      idle-timeout:       600000
+
+  jpa:
+    hibernate:
+      #ddl-auto: validate
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect:        org.hibernate.dialect.PostgreSQLDialect
+        default_schema: ecm_forms
+    show-sql:     false
+    open-in-view: false
+
+  flyway:
+    enabled:             true
+    locations:           classpath:db/migration
+    baseline-on-migrate: true
+    schemas:             ecm_forms,ecm_core,ecm_audit
+
+  rabbitmq:
+    host:         ${RABBITMQ_HOST:localhost}
+    port:         ${RABBITMQ_PORT:5672}
+    username:     ${RABBITMQ_USER:ecmrabbit}
+    password:     ${RABBITMQ_PASS:ecmrabbitpassword}
+    virtual-host: ecm
+    listener:
+      simple:
+        retry:
+          enabled:          true
+          initial-interval: 2000
+          max-attempts:     3
+          multiplier:       2.0
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Matches ecm-identity, ecm-document and ecm-gateway exactly
+          issuer-uri:  ${OKTA_ISSUER_URI:https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697}
+          jwk-set-uri: ${OKTA_ISSUER_URI:https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697}/v1/keys
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: non_null
+
+# Okta audience — must match AudienceValidator in ecm-common
+okta:
+  oauth2:
+    audience: ${OKTA_AUDIENCE:api://sso-default}
+
+ecm:
+  security:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:4200}
+
+  minio:
+    endpoint:   ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:ecmminioadmin}
+    secret-key: ${MINIO_SECRET_KEY:ecmminio@password123}
+    buckets:
+      documents: ecm-documents   # generated + signed PDFs
+      temp:      ecm-temp
+      templates: ecm-templates
+      archive:   ecm-archive
+
+  docusign:
+    enabled:          false                # true when credentials are ready
+    integration-key:  ${DOCUSIGN_INTEGRATION_KEY:stub-key}
+    account-id:       ${DOCUSIGN_ACCOUNT_ID:stub-account}
+    user-id:          ${DOCUSIGN_USER_ID:stub-user}
+    private-key-path: ${DOCUSIGN_RSA_KEY_PATH:./keys/docusign.pem}
+    base-url:         https://demo.docusign.net/restapi
+    auth-server:      https://account-d.docusign.com
+    webhook-secret:   ${DOCUSIGN_WEBHOOK_SECRET:stub-secret}
+    expiry-days:      30
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.ecm.eforms:               DEBUG
+    org.springframework.security: INFO
+    org.springframework.amqp:     INFO
+    org.flywaydb:                 INFO
+    org.hibernate.SQL:            WARN
+
+---
+# Azure production profile — activate with: --spring.profiles.active=azure
+spring:
+  config:
+    activate:
+      on-profile: azure
+
+  datasource:
+    url:      ${AZURE_POSTGRESQL_URL}
+    username: ${AZURE_POSTGRESQL_USER}
+    password: ${AZURE_POSTGRESQL_PASSWORD}
+
+  rabbitmq:
+    host:         ${AZURE_SERVICEBUS_HOST}
+    username:     ${AZURE_SERVICEBUS_USER}
+    password:     ${AZURE_SERVICEBUS_PASSWORD}
+    virtual-host: ecm
+    ssl:
+      enabled: true
+
+ecm:
+  minio:
+    endpoint:   ${AZURE_BLOB_ENDPOINT}
+    access-key: ${AZURE_BLOB_KEY}
+    secret-key: ${AZURE_BLOB_SECRET}
+
+  docusign:
+    base-url:    https://www.docusign.net/restapi
+    auth-server: https://account.docusign.com

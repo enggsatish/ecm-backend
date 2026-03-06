@@ -1,0 +1,113 @@
+spring:
+  application:
+    name: ecm-workflow
+  scheduling:
+    enabled: true
+
+  # ── Database ────────────────────────────────────────────────────────────────
+  datasource:
+    url:                  jdbc:postgresql://localhost:5432/ecmdb
+    username:             ecmuser
+    password:             ecmpassword
+    driver-class-name:    org.postgresql.Driver
+    hikari:
+      pool-name:          WorkflowServicePool
+      maximum-pool-size:  10
+      minimum-idle:       2
+
+  jpa:
+    hibernate:
+      ddl-auto: validate          # Flyway owns our schema; Flowable manages its own ACT_* tables
+    properties:
+      hibernate:
+        default_schema:   ecm_workflow
+        dialect:          org.hibernate.dialect.PostgreSQLDialect
+    show-sql:             false
+    open-in-view:         false
+
+  # ── Flyway ──────────────────────────────────────────────────────────────────
+  # Flyway manages ONLY our custom ecm_workflow schema.
+  # Flowable manages its own ACT_* tables via its own schema update mechanism.
+  flyway:
+    enabled:              true
+    schemas:              ecm_workflow
+    baseline-on-migrate:  true
+    baseline-version:     1
+    locations:            classpath:db/migration
+    #repain-on-migration: true # remove after fix
+
+  # ── RabbitMQ ────────────────────────────────────────────────────────────────
+  rabbitmq:
+    host:           localhost
+    port:           5672
+    username:       ecmrabbit
+    password:       ecmrabbitpassword
+    virtual-host:   ecm
+
+
+  # ── OAuth2 resource server ───────────────────────────────────────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697
+
+# ── Server ───────────────────────────────────────────────────────────────────
+server:
+  port: 8083
+
+# ── Okta audience ────────────────────────────────────────────────────────────
+okta:
+  oauth2:
+    audience: api://sso-default
+
+# ── Flowable BPM ─────────────────────────────────────────────────────────────
+flowable:
+  # Let Flowable create/update its own ACT_* tables automatically.
+  # Use 'true' for dev; switch to 'false' + managed migrations in production.
+  database-schema-update: true
+
+  # Deploy BPMN files from classpath:processes/ on startup
+  check-process-definitions: true
+  process-definition-location-prefix: classpath:/processes/
+  process-definition-location-suffixes:
+    - "**.bpmn20.xml"
+    - "**.bpmn"
+
+  # Async executor: disabled for PoC (timers, boundary events), enable for prod
+  async-executor-activate: false
+
+  # IDM engine: disabled — Okta and our ecm-identity service handle identity
+  idm:
+    enabled: false
+
+  # History level: audit captures task start/end/assignee changes
+  history-level: audit
+
+# ── CORS (read by ecm-common SecurityConfig) ─────────────────────────────────
+ecm:
+  security:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
+  sla:
+    check-interval-ms: 300000   # 5 minutes
+  rabbitmq:
+    queues:
+      document-uploaded: ecm.workflow.document.uploaded
+
+# ── Actuator ─────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.ecm.workflow:           DEBUG
+    org.flowable:               WARN
+    org.springframework.security: INFO
+    org.flywaydb:               INFO

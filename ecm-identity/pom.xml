@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ecm</groupId>
+        <artifactId>ecm-platform</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ecm-identity</artifactId>
+    <name>ECM Identity Service</name>
+    <description>Authentication, Okta user sync, user/role management. Port 8081.</description>
+
+    <dependencies>
+
+        <!-- ── Internal ───────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>com.ecm</groupId>
+            <artifactId>ecm-common</artifactId>
+        </dependency>
+
+        <!--
+            ecm-common already transitively provides:
+              spring-boot-starter-web
+              spring-boot-starter-security
+              spring-boot-starter-oauth2-resource-server
+              spring-boot-starter-aop
+              spring-boot-starter-validation
+              spring-boot-starter-actuator
+              spring-boot-starter-data-jpa
+              mapstruct
+
+            Only declare what ecm-identity needs ON TOP of that.
+        -->
+
+        <!-- ── Database ───────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!-- ── Redis (session / token cache) ─────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- ── Testing ────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

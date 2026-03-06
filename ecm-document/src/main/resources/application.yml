@@ -1,0 +1,98 @@
+spring:
+  application:
+    name: ecm-document
+
+  # ── Database ────────────────────────────────────────────────────────────────
+  datasource:
+    url:                  jdbc:postgresql://localhost:5432/ecmdb
+    username:             ecmuser
+    password:             ecmpassword
+    driver-class-name:    org.postgresql.Driver
+    hikari:
+      pool-name:          DocumentServicePool
+      maximum-pool-size:  10
+      minimum-idle:       2
+
+  jpa:
+    hibernate:
+      ddl-auto: validate          # Flyway owns the schema; Hibernate must NOT alter it
+    properties:
+      hibernate:
+        default_schema:   ecm_core
+        dialect:          org.hibernate.dialect.PostgreSQLDialect
+    show-sql:             false
+    open-in-view:         false
+
+  # ── Flyway ──────────────────────────────────────────────────────────────────
+  flyway:
+    enabled:              true
+    schemas:              ecm_core
+    baseline-on-migrate:  true     # treats existing schema as already at V1
+    baseline-version:     1
+    locations:            classpath:db/migration
+
+  # ── RabbitMQ ────────────────────────────────────────────────────────────────
+  rabbitmq:
+    host:           localhost
+    port:           5672
+    username:       ecmrabbit
+    password:       ecmrabbitpassword
+    virtual-host:   ecm
+
+  # ── File upload limits ───────────────────────────────────────────────────────
+  servlet:
+    multipart:
+      max-file-size:      50MB
+      max-request-size:   55MB
+
+  # ── OAuth2 resource server ───────────────────────────────────────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697
+
+# ── Server ───────────────────────────────────────────────────────────────────
+server:
+  port: 8082
+
+# ── Okta audience — read by ecm-common SecurityConfig (okta.oauth2.audience) ─
+# Must match what ecm-identity uses exactly
+okta:
+  oauth2:
+    audience: api://sso-default
+
+# ── MinIO ────────────────────────────────────────────────────────────────────
+ecm:
+  opensearch:
+      host: ${OPENSEARCH_HOST:localhost}
+      port: ${OPENSEARCH_PORT:9200}
+      index-name: ${OPENSEARCH_INDEX:ecm-documents}
+
+  minio:
+    endpoint:   ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:ecmminioadmin}
+    secret-key: ${MINIO_SECRET_KEY:ecmminio@password123}
+  storage:
+    bucket:     ${MINIO_BUCKET:ecm-documents}
+  # CORS — read by ecm-common SecurityConfig (ecm.security.allowed-origins)
+  security:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
+
+# ── Actuator ────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.ecm.document: DEBUG
+    org.springframework.security: INFO
+    io.minio: WARN
+    org.flywaydb: INFO
