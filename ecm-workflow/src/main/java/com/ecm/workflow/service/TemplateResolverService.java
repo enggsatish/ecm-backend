@@ -53,4 +53,16 @@ public class TemplateResolverService {
                         ", category=" + categoryId +
                         " and no default template is configured.");
     }
+
+    public WorkflowTemplate resolveUnlinked() {
+        return templateRepo.findByProcessKeyAndStatus(
+                        "unlinked-document-triage", WorkflowTemplate.Status.PUBLISHED)
+                .orElseGet(() -> {
+                    log.warn("No 'unlinked-document-triage' template found — using system default");
+                    return templateRepo.findByIsDefaultTrueAndStatus(WorkflowTemplate.Status.PUBLISHED)
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "No unlinked-document-triage template and no system default. " +
+                                            "Create a template with processKey='unlinked-document-triage'."));
+                });
+    }
 }

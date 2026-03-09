@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Unlinked Document Triage Process
+  ==================================
+  process key: unlinked-document-triage
+
+  Triggered when a document is uploaded without a partyExternalId.
+  Backoffice links the document to a party, then either marks complete or rejects.
+-->
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="http://ecm.com/workflow">
+
+    <process id="unlinked-document-triage"
+             name="Unlinked Document Triage"
+             isExecutable="true">
+
+        <startEvent id="start" name="Document Uploaded (No Party)"/>
+
+        <sequenceFlow id="f1" sourceRef="start" targetRef="triageTask"/>
+
+        <userTask id="triageTask"
+                  name="Link Document to Party"
+                  flowable:candidateGroups="ECM_BACKOFFICE">
+            <documentation>
+                Document '${documentName}' was uploaded without a party association.
+                Please link this document to the correct party and categorise it.
+                Decision: COMPLETE (linked) or REJECTED (discard).
+            </documentation>
+            <extensionElements>
+                <flowable:taskListener event="create"
+                                       delegateExpression="${taskCreatedListener}"/>
+                <flowable:taskListener event="complete"
+                                       delegateExpression="${taskCompletedListener}"/>
+            </extensionElements>
+        </userTask>
+
+        <sequenceFlow id="f2" sourceRef="triageTask" targetRef="triageGateway"/>
+
+        <exclusiveGateway id="triageGateway" name="Triage Decision"/>
+
+        <sequenceFlow id="fComplete" sourceRef="triageGateway" targetRef="completedEnd">
+            <conditionExpression>${decision == 'APPROVED'}</conditionExpression>
+        </sequenceFlow>
+        <sequenceFlow id="fReject" sourceRef="triageGateway" targetRef="rejectedEnd">
+            <conditionExpression>${decision == 'REJECTED'}</conditionExpression>
+        </sequenceFlow>
+
+        <endEvent id="completedEnd" name="Document Linked">
+            <extensionElements>
+                <flowable:executionListener event="start"
+                                            delegateExpression="${processCompletedListener}"/>
+            </extensionElements>
+        </endEvent>
+
+        <endEvent id="rejectedEnd" name="Document Rejected">
+            <extensionElements>
+                <flowable:executionListener event="start"
+                                            delegateExpression="${processCompletedListener}"/>
+            </extensionElements>
+        </endEvent>
+
+    </process>
+</definitions>

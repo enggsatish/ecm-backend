@@ -8,18 +8,6 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/**
- * Our own tracking record for workflow instances.
- *
- * Bridges Flowable's opaque process_instance_id to ECM domain concepts:
- *   - document_id (UUID from ecm_core.documents)
- *   - document_name (denormalised — avoids cross-service call for display)
- *   - status (our enum, updated by processCompletedListener)
- *   - started_by_subject (Okta JWT sub)
- *
- * This table is the source of truth for the frontend's workflow list views.
- * Flowable's ACT_HI_* history tables hold the detailed task/audit trail.
- */
 @Entity
 @Table(name = "workflow_instance_records", schema = "ecm_workflow")
 @Getter @Setter
@@ -28,15 +16,15 @@ public class WorkflowInstanceRecord {
 
     public enum Status {
         ACTIVE,
-        INFO_REQUESTED,        // Reviewer requested more info from submitter
+        INFO_REQUESTED,
         COMPLETED_APPROVED,
         COMPLETED_REJECTED,
         CANCELLED
     }
 
     public enum TriggerType {
-        MANUAL,   // uploader selected a workflow
-        AUTO      // triggered by document category mapping
+        MANUAL,
+        AUTO
     }
 
     @Id
@@ -44,19 +32,25 @@ public class WorkflowInstanceRecord {
     @Column(updatable = false, nullable = false)
     private UUID id;
 
-    /** Flowable's internal process instance ID — used for all Flowable API calls */
     @Column(name = "process_instance_id", nullable = false, unique = true, length = 100)
     private String processInstanceId;
 
-    /** The document this workflow is reviewing */
-    @Column(name = "document_id", nullable = false)
+    /**
+     * CHANGED: nullable = true  (was false)
+     *
+     * Form-triggered workflows have no document at submission time.
+     * The document UUID is populated only after reviewer APPROVAL fires
+     * the WorkflowCompletedListener in ecm-eforms, which creates the document
+     * and can optionally call back to update this field.
+     *
+     * Document-triggered workflows always supply documentId at start.
+     */
+    @Column(name = "document_id")                       // ← removed nullable = false
     private UUID documentId;
 
-    /** Denormalised display name — avoids cross-service lookup */
     @Column(name = "document_name", length = 500)
     private String documentName;
 
-    /** Optional: category that triggered the auto-workflow */
     @Column(name = "category_id")
     private Integer categoryId;
 
@@ -74,7 +68,6 @@ public class WorkflowInstanceRecord {
     @Builder.Default
     private TriggerType triggerType = TriggerType.MANUAL;
 
-    /** Okta JWT sub of the user who triggered (uploaded the document or clicked Start) */
     @Column(name = "started_by_subject", nullable = false, length = 255)
     private String startedBySubject;
 
@@ -84,7 +77,6 @@ public class WorkflowInstanceRecord {
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
 
-    /** Final reviewer comment — copied from Flowable process variable on completion */
     @Column(name = "final_comment", columnDefinition = "text")
     private String finalComment;
 
@@ -98,4 +90,8 @@ public class WorkflowInstanceRecord {
 
     @Column(name = "template_id")
     private Integer templateId;
+
+    /** Okta subject of the form submitter (only for form-triggered workflows) */
+    @Column(name = "submission_id", length = 100)       // ← ADD: link back to the FormSubmission
+    private String submissionId;
 }

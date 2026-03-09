@@ -49,6 +49,7 @@ okta:
     audience: api://sso-default
 
 ecm:
+  master-encrypt-key: ${MASTER_ENCRYPT_KEY:b5+BMrlFk333DFKoF2Sl1GJpeRc6KbfHcv1rp9WC9gY=}
   security:
     allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
   services:

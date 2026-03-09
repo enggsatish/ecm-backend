@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -90,6 +91,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .tags(metadata != null ? metadata.tags() : null)
                 .segmentId(metadata != null ? metadata.segmentId() : null)         // NEW
                 .productLineId(metadata != null ? metadata.productLineId() : null) // NEW
+                .partyExternalId(metadata != null ? metadata.partyExternalId() : null)
                 .build();
 
         try {
@@ -111,6 +113,8 @@ public class DocumentServiceImpl implements DocumentService {
 
         // 4. Publish OCR event — best-effort, never rolls back upload
         publishOcrEvent(document);
+        // Publish workflow trigger — always best-effort, never blocks upload
+        publishWorkflowTriggerEvent(document);
 
         return documentMapper.toResponse(document);
     }
@@ -224,7 +228,7 @@ public class DocumentServiceImpl implements DocumentService {
                     RabbitMqConfig.EXCHANGE, RabbitMqConfig.OCR_ROUTING_KEY, event);
             log.debug("OCR event published for documentId={}", doc.getId());
         } catch (Exception ex) {
-            log.warn("RabbitMQ unavailable for OCR event (documentId={}) — " +
+            log.error("RabbitMQ unavailable for OCR event (documentId={}) — " +
                     "applying PoC synchronous fallback: PENDING_OCR → ACTIVE", doc.getId(), ex);
             // ── PoC Synchronous Fallback ──────────────────────────────────────────
             // When RabbitMQ is down or the virtual-host isn't ready, the async OCR
@@ -234,16 +238,48 @@ public class DocumentServiceImpl implements DocumentService {
             // In production: remove this block and ensure RabbitMQ is always available
             // before the application starts (health check in docker-compose / k8s).
             try {
-                documentRepository.findById(doc.getId()).ifPresent(d -> {
-                    if (d.getStatus() == DocumentStatus.PENDING_OCR) {
-                        d.setStatus(DocumentStatus.ACTIVE);
-                        documentRepository.save(d);
-                        log.info("Synchronous OCR fallback: document {} → ACTIVE", d.getId());
-                    }
-                });
+//                documentRepository.findById(doc.getId()).ifPresent(d -> {
+//                    if (d.getStatus() == DocumentStatus.PENDING_OCR) {
+//                        d.setStatus(DocumentStatus.ACTIVE);
+//                        documentRepository.save(d);
+//                        log.info("Synchronous OCR fallback: document {} → ACTIVE", d.getId());
+//                    }
+//                });
             } catch (Exception fallbackEx) {
                 log.error("Synchronous OCR fallback also failed for documentId={}", doc.getId(), fallbackEx);
             }
+        }
+    }
+
+    /**
+     * Publishes a document.workflow.trigger event to the ecm.documents exchange.
+     * This is separate from the OCR event — OCR is for text extraction;
+     * this event drives Flowable workflow routing by category + partyExternalId.
+     *
+     * partyExternalId=null → DocumentUploadedListener routes to unlinked-document-triage.
+     * partyExternalId=set  → normal category/product template resolution.
+     *
+     * Always best-effort — failure never rolls back the upload.
+     */
+    private void publishWorkflowTriggerEvent(Document doc) {
+        try {
+            Map<String, Object> event = new java.util.HashMap<>();
+            event.put("documentId",      doc.getId().toString());
+            event.put("documentName",    doc.getName());
+            event.put("categoryId",      doc.getCategoryId());
+            event.put("uploadedBy",      doc.getUploadedByEmail());
+            event.put("partyExternalId", doc.getPartyExternalId());  // ← null triggers triage
+            event.put("correlationId",   UUID.randomUUID().toString());
+
+            rabbitTemplate.convertAndSend(
+                    RabbitMqConfig.EXCHANGE,
+                    RabbitMqConfig.WORKFLOW_TRIGGER_ROUTING_KEY,
+                    event);
+            log.debug("Workflow trigger published for documentId={}, party={}",
+                    doc.getId(), doc.getPartyExternalId());
+        } catch (Exception ex) {
+            log.warn("Workflow trigger publish failed for documentId={} — upload succeeded, workflow may not start: {}",
+                    doc.getId(), ex.getMessage());
         }
     }
 }

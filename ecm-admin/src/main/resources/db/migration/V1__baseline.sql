@@ -1,0 +1,18 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ecm-admin  V1__baseline.sql
+--
+-- PURPOSE:
+--   This file exists only to register a Flyway schema_history entry at version 1.
+--   The actual schema was bootstrapped from init_v3.sql (master DDL file).
+--
+-- IMPORTANT:
+--   This file must be placed in:
+--     ecm-admin/src/main/resources/db/migration/V1__baseline.sql
+--
+--   The OLD migration files (V2__add_hierarchy.sql, V3__retention_hierarchy.sql)
+--   must be DELETED from that folder before starting the service.
+--   They have already been folded into init_v3.sql.
+--
+--   Future schema changes → V2__*.sql, V3__*.sql, etc.
+-- ─────────────────────────────────────────────────────────────────────────────
+SELECT 1; -- no-op baseline marker

@@ -2,6 +2,7 @@ package com.ecm.admin.controller;
 
 import com.ecm.common.model.ApiResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,6 +22,7 @@ import java.util.*;
  * Dynamic WHERE clause built from optional request params.
  * Max page size is capped at 100 to prevent runaway queries.
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/admin/audit")
 @PreAuthorize("hasRole('ECM_ADMIN')")
@@ -58,21 +60,23 @@ public class AuditLogController {
             @RequestParam(defaultValue = "50") int size) {
 
         // Build dynamic WHERE clause
+        log.info("queryAudit");
         List<Object> params  = new ArrayList<>();
         StringBuilder where  = new StringBuilder(" WHERE 1=1 ");
 
-        if (userId       != null) { where.append(" AND entra_object_id = ?"); params.add(userId); }
-        if (event        != null) { where.append(" AND event_type = ?");       params.add(event); }
-        if (resourceType != null) { where.append(" AND resource_type = ?");    params.add(resourceType); }
-        if (severity     != null) { where.append(" AND severity = ?");         params.add(severity); }
-        if (from         != null) { where.append(" AND created_at >= ?");    params.add(from); }
-        if (to           != null) { where.append(" AND created_at <= ?");    params.add(to); }
+        if (userId       != null && !userId.isBlank()) { where.append(" AND entra_object_id = ?"); params.add(userId); }
+        if (event        != null && !event.isBlank()) { where.append(" AND event_type = ?");       params.add(event); }
+        if (resourceType != null && !resourceType.isBlank()) { where.append(" AND resource_type = ?");    params.add(resourceType); }
+        if (severity     != null && !severity.isBlank()) { where.append(" AND severity = ?");         params.add(severity); }
+        if (from         != null ) { where.append(" AND created_at >= ?");    params.add(from); }
+        if (to           != null ) { where.append(" AND created_at <= ?");    params.add(to); }
 
         // COUNT — uses the same WHERE params list (clone before adding LIMIT/OFFSET)
         String countSql = "SELECT COUNT(*) FROM ecm_audit.audit_log" + where;
+        log.info("countSql:{}", countSql);
         Long total = jdbc.queryForObject(countSql, Long.class, params.toArray());
         if (total == null) total = 0L;
-
+        log.info("total:{}", total);
         // DATA — append pagination params after counting
         int effectiveSize = Math.min(size, 100);
         String dataSql =
@@ -92,7 +96,7 @@ public class AuditLogController {
         result.put("totalPages",    (int) Math.ceil((double) total / effectiveSize));
         result.put("page",          page);
         result.put("size",          effectiveSize);
-
+        log.info("result:{}", result);
         return ResponseEntity.ok(ApiResponse.ok(result));
     }
 }

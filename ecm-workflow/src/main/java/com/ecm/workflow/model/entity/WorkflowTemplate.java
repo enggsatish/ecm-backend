@@ -35,6 +35,24 @@ public class WorkflowTemplate {
     @Column(name = "dsl_definition", columnDefinition = "jsonb", nullable = false)
     private String dslDefinition;
 
+    /**
+     * Raw BPMN 2.0 XML authored via the bpmn.io visual designer.
+     * When present AND bpmnSource == VISUAL, this is deployed directly
+     * to Flowable instead of generating XML from dslDefinition.
+     */
+    @Column(name = "bpmn_xml", columnDefinition = "TEXT")
+    private String bpmnXml;
+
+    /**
+     * Tracks which authoring mode produced the current deployable definition.
+     * DSL    = generate BPMN from dslDefinition at publish time.
+     * VISUAL = use stored bpmn_xml as-is.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "bpmn_source", nullable = false, length = 20)
+    @Builder.Default
+    private BpmnSource bpmnSource = BpmnSource.DSL;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     @Builder.Default
@@ -84,7 +102,7 @@ public class WorkflowTemplate {
     @PreUpdate
     public void onUpdate() { this.updatedAt = LocalDateTime.now(); }
 
-    /** Convenience deserializer */
+    /** Convenience deserializer for the JSON DSL */
     public WorkflowTemplateDsl getDsl(ObjectMapper mapper) {
         try {
             return mapper.readValue(this.dslDefinition, WorkflowTemplateDsl.class);
@@ -93,5 +111,19 @@ public class WorkflowTemplate {
         }
     }
 
+    /** Returns true when the visual BPMN designer XML should be used at publish. */
+    public boolean hasVisualBpmn() {
+        return BpmnSource.VISUAL == this.bpmnSource
+                && this.bpmnXml != null
+                && !this.bpmnXml.isBlank();
+    }
+
     public enum Status { DRAFT, PUBLISHED, DEPRECATED }
+
+    public enum BpmnSource {
+        /** BPMN will be generated from dslDefinition at publish time. */
+        DSL,
+        /** bpmn_xml was authored in the visual designer and will be deployed directly. */
+        VISUAL
+    }
 }

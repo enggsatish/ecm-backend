@@ -29,26 +29,28 @@ import java.util.UUID;
 @Slf4j
 public class DocumentController {
 
-    private final DocumentService    documentService;
-    private final EcmUserRepository  ecmUserRepository;
-    private static final long MAX_UPLOAD_BYTES = 50L * 1024 * 1024; // 50 MB
+    private final DocumentService   documentService;
+    private final EcmUserRepository ecmUserRepository;
 
-    // AFTER
+    private static final long   MAX_UPLOAD_BYTES    = 50L * 1024 * 1024; // 50 MB
+    private static final String INTERNAL_HEADER     = "X-Internal-Service";
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     /**
-     * Resolves the JWT subject → ecm_core.users integer PK.
+     * Resolves the JWT subject to the ecm_core.users integer PK.
      *
      * Throws AccessDeniedException (→ HTTP 403) if the user has never logged into
-     * ecm-identity. This means the user exists in Okta but has not been provisioned
-     * in the ECM database yet. The fix is for the user to visit the frontend once
-     * (which calls GET /api/auth/me and triggers auto-provisioning).
+     * ecm-identity (i.e. not yet provisioned). Fix: visit the frontend once so
+     * GET /api/auth/me triggers auto-provisioning.
      */
     private Integer resolveUserId(Jwt jwt) {
         String subject = jwt.getSubject();
         return ecmUserRepository
                 .findByEntraObjectId(subject)
-                .map(u -> u.getId())
+                .map(EcmUser::getId)
                 .orElseThrow(() -> {
-                    log.warn("User not provisioned in ECM — must call /api/auth/me first. subject={}", subject);
+                    log.warn("User not provisioned — must call /api/auth/me first. subject={}", subject);
                     return new org.springframework.security.access.AccessDeniedException(
                             "User account not provisioned. Please sign in to the ECM portal first.");
                 });
@@ -56,12 +58,30 @@ public class DocumentController {
 
     // ── Upload ────────────────────────────────────────────────────────────────
 
+    /**
+     * Upload a document. Handles two callers:
+     *
+     * (A) Human via frontend — JWT present:
+     *     Spring Security validates the Okta token and injects a non-null Jwt.
+     *     uploadedBy   = ecm_core.users.id resolved from jwt.subject
+     *     uploadedByEmail = jwt email claim
+     *
+     * (B) Internal service (DocumentPromotionClient from ecm-eforms) — no JWT:
+     *     DocumentSecurityConfig permits the request before JWT validation runs.
+     *     @AuthenticationPrincipal Jwt jwt is therefore null.
+     *     uploadedBy      = null  (documents.uploaded_by column is nullable — OK)
+     *     uploadedByEmail = "ecm-eforms"  (stored for audit trail visibility)
+     *
+     * The two paths are distinguished purely by whether jwt is null.
+     * The X-Internal-Service header is also captured for logging.
+     */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<DocumentResponse>> upload(
-            @RequestPart("files") MultipartFile file,                          // "file" not "files"
+            @RequestPart("files") MultipartFile file,
             @RequestPart(value = "metadata", required = false)
             @Valid DocumentUploadRequest metadata,
-            @AuthenticationPrincipal Jwt jwt
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = INTERNAL_HEADER, required = false) String internalService
     ) {
         if (file.isEmpty()) {
             return ResponseEntity
@@ -71,12 +91,27 @@ public class DocumentController {
         if (file.getSize() > MAX_UPLOAD_BYTES) {
             return ResponseEntity
                     .status(HttpStatus.PAYLOAD_TOO_LARGE)
-                    .body(ApiResponse.error(
-                            "File exceeds the 50 MB limit", "FILE_TOO_LARGE"));
+                    .body(ApiResponse.error("File exceeds the 50 MB limit", "FILE_TOO_LARGE"));
         }
-        log.info("Upload: file={}, size={}, user={}",
-                file.getOriginalFilename(), file.getSize(), jwt.getSubject());
-        DocumentResponse response = documentService.upload(file, metadata, resolveUserId(jwt), jwt.getClaimAsString("email"));
+
+        final boolean internalCall = (jwt == null);
+
+        final Integer uploadedByUserId = internalCall
+                ? null
+                : resolveUserId(jwt);
+
+        final String uploadedByEmail = internalCall
+                ? (internalService != null ? internalService : "internal-service")
+                : jwt.getClaimAsString("email");
+
+        log.info("Upload: file={}, size={}, caller={}",
+                file.getOriginalFilename(),
+                file.getSize(),
+                internalCall ? "internal:" + internalService : jwt.getSubject());
+
+        DocumentResponse response = documentService.upload(
+                file, metadata, uploadedByUserId, uploadedByEmail);
+
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(response, "Document uploaded successfully"));
@@ -84,12 +119,11 @@ public class DocumentController {
 
     // ── List ──────────────────────────────────────────────────────────────────
 
-    // AFTER — adds optional ?search=... parameter
     @GetMapping
     public ResponseEntity<ApiResponse<PagedResponse<DocumentResponse>>> list(
-            @RequestParam(defaultValue = "0")   int    page,
-            @RequestParam(defaultValue = "20")  int    size,
-            @RequestParam(required = false)     String search
+            @RequestParam(defaultValue = "0")  int    page,
+            @RequestParam(defaultValue = "20") int    size,
+            @RequestParam(required = false)    String search
     ) {
         int safeSize = Math.min(size, 100);
         Pageable pageable = PageRequest.of(page, safeSize,

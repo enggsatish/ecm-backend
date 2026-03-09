@@ -22,21 +22,59 @@ public class FieldExtractorService {
     // Keyed by categoryCode (upper-case) → template
     private final Map<String, ExtractionTemplate> templates = new HashMap<>();
 
+    /**
+     * Loads all extraction templates from classpath:ocr/extraction-templates/*.json.
+     *
+     * Per-file error handling: a malformed or truncated JSON file is logged and skipped
+     * — it does NOT crash the application context. A startup failure here would block
+     * ALL OCR processing for every document type, which is far worse than one bad template.
+     *
+     * If a template fails to load, OCR still runs; the affected category returns no
+     * structured fields (raw extracted text is still stored). Fix the JSON and restart.
+     *
+     * Common cause: file truncated by a zip extraction issue, saved mid-edit,
+     * or hand-edited with a missing closing bracket/quote.
+     */
     @PostConstruct
-    public void loadTemplates() throws IOException {
+    public void loadTemplates() {
         PathMatchingResourcePatternResolver resolver =
                 new PathMatchingResourcePatternResolver();
-        Resource[] resources = resolver.getResources(
-                "classpath:ocr/extraction-templates/*.json");
 
-        for (Resource r : resources) {
-            ExtractionTemplate t = objectMapper.readValue(r.getInputStream(),
-                    ExtractionTemplate.class);
-            templates.put(t.categoryCode().toUpperCase(), t);
-            log.info("Loaded extraction template: {} ({} fields)",
-                    t.categoryCode(), t.fields().size());
+        Resource[] resources;
+        try {
+            resources = resolver.getResources("classpath:ocr/extraction-templates/*.json");
+        } catch (IOException e) {
+            log.warn("Could not scan extraction-templates directory: {} — field extraction disabled",
+                    e.getMessage());
+            return;
         }
-        log.info("Total extraction templates loaded: {}", templates.size());
+
+        int loaded = 0;
+        int failed = 0;
+        for (Resource r : resources) {
+            try {
+                ExtractionTemplate t = objectMapper.readValue(r.getInputStream(),
+                        ExtractionTemplate.class);
+                templates.put(t.categoryCode().toUpperCase(), t);
+                log.info("Loaded extraction template: {} ({} fields)",
+                        t.categoryCode(), t.fields().size());
+                loaded++;
+            } catch (Exception e) {
+                // Log the exact filename and parse error so it is easy to find and fix.
+                // JsonEOFException means the file is truncated (incomplete JSON).
+                log.error("Skipping malformed template '{}': {} " +
+                                "— fix the file and restart to reload.",
+                        r.getFilename(), e.getMessage());
+                failed++;
+            }
+        }
+        log.info("Extraction templates: {} loaded, {} failed to parse", loaded, failed);
+        if (failed > 0) {
+            log.warn("{} template(s) could not be loaded. " +
+                            "Those document categories will produce no structured fields. " +
+                            "Check files under src/main/resources/ocr/extraction-templates/",
+                    failed);
+        }
     }
 
     /**

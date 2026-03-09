@@ -3,15 +3,21 @@ package com.ecm.workflow.service;
 import com.ecm.common.exception.ResourceNotFoundException;
 import com.ecm.workflow.dto.WorkflowDtos.TaskActionRequest;
 import com.ecm.workflow.dto.WorkflowDtos.WorkflowTaskDto;
+import com.ecm.workflow.dto.WorkflowDtos.*;
+import com.ecm.workflow.model.entity.WorkflowSlaTracking;
+import com.ecm.workflow.repository.WorkflowInstanceRecordRepository;
+import com.ecm.workflow.repository.WorkflowSlaTrackingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.HistoryService;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.TaskQuery;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.*;
 
 /**
@@ -35,6 +41,9 @@ public class EcmTaskService {
     private final org.flowable.engine.TaskService flowableTaskService;
     private final HistoryService                  historyService;
     private final WorkflowInstanceService         workflowInstanceService;
+    private final WorkflowInstanceRecordRepository instanceRecordRepo;
+    private final WorkflowSlaTrackingRepository slaTrackingRepo;
+    private final JdbcTemplate jdbcTemplate;
 
     // ── Query tasks ───────────────────────────────────────────────────────
 
@@ -90,6 +99,7 @@ public class EcmTaskService {
 
         return merged.values().stream().map(this::toDto).toList();
     }
+
 
     /**
      * Get a single task by ID (throws if not found).
@@ -304,5 +314,159 @@ public class EcmTaskService {
                         : null,
                 status
         );
+    }
+
+    /**
+     * Returns enriched queue items: all unassigned pool tasks + my claimed tasks.
+     * Party context is fetched from ecm_core.parties via JdbcTemplate (cross-schema read).
+     */
+    public List<TaskQueueItemDto> getQueueItems(String userSubject, List<String> candidateGroups) {
+        // Tasks claimed by me
+        List<Task> mine = flowableTaskService.createTaskQuery()
+                .taskAssignee(userSubject)
+                .orderByTaskCreateTime().desc()
+                .list();
+
+        // Pool tasks available to my groups
+        List<Task> pool = candidateGroups.isEmpty() ? List.of()
+                : flowableTaskService.createTaskQuery()
+                .taskCandidateGroupIn(candidateGroups)
+                .taskUnassigned()
+                .orderByTaskCreateTime().desc()
+                .list();
+
+        Map<String, Task> merged = new LinkedHashMap<>();
+        mine.forEach(t -> merged.put(t.getId(), t));
+        pool.forEach(t -> merged.putIfAbsent(t.getId(), t));
+
+        return merged.values().stream()
+                .map(this::enrichTask)
+                .toList();
+    }
+
+    /**
+     * My claimed tasks only — for "My Tasks" tab.
+     */
+    public List<TaskQueueItemDto> getMyQueueItems(String userSubject) {
+        return flowableTaskService.createTaskQuery()
+                .taskAssignee(userSubject)
+                .orderByTaskCreateTime().desc()
+                .list()
+                .stream()
+                .map(this::enrichTask)
+                .toList();
+    }
+
+    /**
+     * Complete a task with a given decision string (APPROVED | REJECTED | REQUEST_INFO).
+     * Exposed for WorkflowQueueController.
+     */
+    public void completeTask(String taskId, String userSubject, String decision, String comment) {
+        Task task = requireTask(taskId);
+
+        // Prevent another user from completing a task that is already claimed by someone else
+        if (task.getAssignee() != null && !task.getAssignee().equals(userSubject)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Task is claimed by another user — release it first");
+        }
+
+        Map<String, Object> vars = new HashMap<>();
+        vars.put("decision", decision);
+        if (comment != null && !comment.isBlank()) {
+            vars.put("comment", comment);
+        }
+
+        flowableTaskService.complete(taskId, vars);
+        log.info("[EcmTaskService] Completed taskId={} decision={} by={}", taskId, decision, userSubject);
+    }
+
+    // ── Party enrichment ──────────────────────────────────────────────────
+
+    private TaskQueueItemDto enrichTask(Task task) {
+        String processId = task.getProcessInstanceId();
+
+        // ── Flowable process variables ────────────────────────────────────────
+        Map<String, Object> vars;
+        try {
+            vars = flowableTaskService.getVariables(task.getId());
+        } catch (Exception e) {
+            log.debug("[enrich] Could not load variables for taskId={}: {}", task.getId(), e.getMessage());
+            vars = Map.of();
+        }
+
+        String documentId   = strVar(vars, "documentId");
+        String documentName = strVar(vars, "documentName");
+        String partyExtId   = strVar(vars, "partyExternalId");
+        String submissionId = strVar(vars, "submissionId");
+        String formName     = strVar(vars, "formName");
+
+        // ── Party display name via cross-schema JdbcTemplate read ─────────────
+        String partyDisplayName = null;
+        String partyType        = null;
+        if (partyExtId != null) {
+            try {
+                Map<String, Object> partyRow = jdbcTemplate.queryForMap(
+                        "SELECT display_name, party_type " +
+                                "FROM ecm_core.parties " +
+                                "WHERE external_id = ? AND is_active = true",
+                        partyExtId);
+                partyDisplayName = (String) partyRow.get("display_name");
+                partyType        = (String) partyRow.get("party_type");
+            } catch (Exception e) {
+                log.debug("[enrich] Party lookup skipped for externalId={}: {}", partyExtId, e.getMessage());
+            }
+        }
+
+        // ── SLA from WorkflowSlaTracking (keyed by workflow instance UUID) ─────
+        java.time.OffsetDateTime slaDeadline = null;
+        String slaStatus = "ON_TRACK";
+        try {
+            // Find the ECM workflow instance record for this Flowable process
+            var instanceOpt = instanceRecordRepo.findByProcessInstanceId(processId);
+            if (instanceOpt.isPresent()) {
+                var instance = instanceOpt.get();
+                // Look up the SLA tracking row (keyed by ECM instance UUID, not Flowable ID)
+                var slaOpt = slaTrackingRepo.findByWorkflowInstanceId(instance.getId());
+                if (slaOpt.isPresent()) {
+                    WorkflowSlaTracking sla = slaOpt.get();
+                    // WorkflowSlaTracking uses LocalDateTime — convert to OffsetDateTime (UTC)
+                    if (sla.getSlaDeadline() != null) {
+                        slaDeadline = sla.getSlaDeadline()
+                                .atOffset(java.time.ZoneOffset.UTC);
+                    }
+                    slaStatus = sla.getStatus() != null
+                            ? sla.getStatus().name()   // ON_TRACK | WARNING | ESCALATED | BREACHED
+                            : "ON_TRACK";
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[enrich] SLA lookup failed for processId={}: {}", processId, e.getMessage());
+        }
+
+        return new TaskQueueItemDto(
+                task.getId(),
+                task.getName(),
+                processId,
+                documentId,
+                documentName,
+                partyExtId,
+                partyDisplayName,
+                partyType,
+                formName,
+                submissionId,
+                task.getAssignee(),
+                null,           // assigneeEmail — resolve via identity service if needed
+                slaDeadline,
+                slaStatus,
+                task.getCreateTime() != null
+                        ? task.getCreateTime().toInstant()
+                        .atOffset(java.time.ZoneOffset.UTC)
+                        : null
+        );
+    }
+
+    private static String strVar(Map<String, Object> vars, String key) {
+        Object v = vars.get(key);
+        return v != null && !String.valueOf(v).isBlank() ? String.valueOf(v) : null;
     }
 }

@@ -106,14 +106,18 @@ public class FlowableListenersConfig {
                 // Do NOT rethrow — process must end cleanly
             }
 
-            // Publish completion event
+            // Publish completion event.
+            // submissionId is stored as a process variable by FormSubmittedListener when
+            // a form triggers this workflow. WorkflowCompletedListener in ecm-eforms uses
+            // it to update FormSubmission.status and create the document record.
             try {
-                Map<String, Object> event = Map.of(
-                        "processInstanceId", execution.getProcessInstanceId(),
-                        "documentId", String.valueOf(execution.getVariable("documentId")),
-                        "decision",   decision != null ? decision : "UNKNOWN",
-                        "comment",    comment  != null ? comment  : ""
-                );
+                Object submissionIdVar = execution.getVariable("submissionId");
+                Map<String, Object> event = new java.util.HashMap<>();
+                event.put("processInstanceId", execution.getProcessInstanceId());
+                event.put("documentId",   String.valueOf(execution.getVariable("documentId")));
+                event.put("decision",     decision != null ? decision : "UNKNOWN");
+                event.put("comment",      comment  != null ? comment  : "");
+                event.put("submissionId", submissionIdVar != null ? submissionIdVar.toString() : null);
                 rabbitTemplate.convertAndSend(
                         WorkflowRabbitConfig.WORKFLOW_EXCHANGE,
                         WorkflowRabbitConfig.WORKFLOW_COMPLETED_ROUTING_KEY,

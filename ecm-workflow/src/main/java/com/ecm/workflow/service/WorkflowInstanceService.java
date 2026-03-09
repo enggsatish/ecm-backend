@@ -61,7 +61,7 @@ public class WorkflowInstanceService {
                         "WorkflowDefinition", req.workflowDefinitionId()));
 
         return start(req.documentId(), req.documentName(), req.categoryId(),
-                     def, TriggerType.MANUAL, startedBySubject, startedByEmail);
+                def, TriggerType.MANUAL, startedBySubject, startedByEmail);
     }
 
     /**
@@ -69,22 +69,22 @@ public class WorkflowInstanceService {
      */
     @Transactional
     public WorkflowInstanceDto startAuto(UUID documentId,
-                                          String documentName,
-                                          Integer categoryId,
-                                          WorkflowDefinitionConfig def,
-                                          String startedBySubject,
-                                          String startedByEmail) {
+                                         String documentName,
+                                         Integer categoryId,
+                                         WorkflowDefinitionConfig def,
+                                         String startedBySubject,
+                                         String startedByEmail) {
         return start(documentId, documentName, categoryId,
-                     def, TriggerType.AUTO, startedBySubject, startedByEmail);
+                def, TriggerType.AUTO, startedBySubject, startedByEmail);
     }
 
     private WorkflowInstanceDto start(UUID documentId,
-                                       String documentName,
-                                       Integer categoryId,
-                                       WorkflowDefinitionConfig def,
-                                       TriggerType triggerType,
-                                       String startedBySubject,
-                                       String startedByEmail) {
+                                      String documentName,
+                                      Integer categoryId,
+                                      WorkflowDefinitionConfig def,
+                                      TriggerType triggerType,
+                                      String startedBySubject,
+                                      String startedByEmail) {
 
         String candidateGroup = def.resolveCandidateGroup();
 
@@ -372,6 +372,73 @@ public class WorkflowInstanceService {
 
         log.info("Workflow started from template '{}' for document={}, instanceId={}",
                 template.getName(), documentId, record.getId());
+
+        return record.getId();
+    }
+
+    @Transactional(readOnly = true)
+    public WorkflowInstanceRecord getInstanceByProcessId(String processInstanceId) {
+        return instanceRecordRepo.findByProcessInstanceId(processInstanceId).orElse(null);
+    }
+
+    /**
+     * Starts a workflow process instance triggered by a form submission.
+     * Called by FormSubmittedListener when ecm-eforms publishes a form.submitted event.
+     *
+     * Differs from startFromTemplate (which takes a WorkflowTemplate) — here we
+     * already have the resolved WorkflowDefinitionConfig from the processKey.
+     *
+     * @param submissionId  UUID string of the FormSubmission (stored as process variable
+     *                      so WorkflowCompletedListener in ecm-eforms can find it)
+     * @param formKey       form identifier (stored for traceability)
+     * @param def           resolved WorkflowDefinitionConfig for the processKey
+     * @param submittedBy   Okta subject of the form submitter
+     * @param extraVars     additional Flowable process variables (submissionId, formKey, etc.)
+     */
+    @Transactional
+    public UUID startFromFormSubmission(String submissionId,
+                                        String formKey,
+                                        WorkflowDefinitionConfig def,
+                                        String submittedBy,
+                                        Map<String, Object> extraVars) {
+
+        String candidateGroup = def.resolveCandidateGroup();
+
+        // Build process variables
+        Map<String, Object> vars = new HashMap<>();
+        if (extraVars != null) vars.putAll(extraVars);
+        vars.put("candidateGroup",   candidateGroup);
+        vars.put("submissionId",     submissionId != null ? submissionId : "");
+        vars.put("formKey",          formKey      != null ? formKey      : "");
+        vars.put("startedBy",        submittedBy  != null ? submittedBy  : "");
+        vars.put("documentId",       "");   // no document yet — will be created on approval
+
+        // FIX: persist record with documentId = null (Fix 2a makes this column nullable)
+        //      and store submissionId so the completion event can trace back to the form.
+        WorkflowInstanceRecord record = WorkflowInstanceRecord.builder()
+                .workflowDefinition(def)
+                .status(Status.ACTIVE)
+                .triggerType(TriggerType.AUTO)
+                .startedBySubject(submittedBy != null ? submittedBy : "SYSTEM")
+                .processInstanceId("PENDING")
+                .documentId(null)              // ← FIX: was missing; column now allows NULL
+                .submissionId(submissionId)    // ← FIX: store for completion event tracing
+                .build();
+        record = instanceRecordRepo.save(record);
+
+        vars.put("instanceRecordId", record.getId().toString());
+
+        // Start the Flowable process
+        ProcessInstance pi = runtimeService.startProcessInstanceByKey(
+                def.getProcessKey(),
+                "form:" + submissionId,
+                vars);
+
+        record.setProcessInstanceId(pi.getId());
+        record = instanceRecordRepo.save(record);
+
+        log.info("Workflow started from form submission: submissionId={}, processKey={}, instanceId={}",
+                submissionId, def.getProcessKey(), record.getId());
 
         return record.getId();
     }

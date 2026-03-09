@@ -1,7 +1,7 @@
 package com.ecm.eforms.controller;
 
-import com.ecm.eforms.event.FormEventPublisher;
 import com.ecm.common.model.ApiResponse;
+import com.ecm.eforms.event.FormEventPublisher;
 import com.ecm.eforms.model.entity.DocuSignEvent;
 import com.ecm.eforms.model.entity.FormSubmission;
 import com.ecm.eforms.repository.DocuSignEventRepository;
@@ -23,11 +23,10 @@ import java.util.UUID;
  * This endpoint is PUBLICLY accessible (no JWT) — both the gateway RouteConfig
  * and EFormsSecurityConfig have it in the permitAll() list.
  * Security is provided by HMAC validation of the X-DocuSign-Signature-1 header.
- * (HMAC validation is commented out — enable before going to production.)
+ * (HMAC validation is stubbed — enable before going to production.)
  *
  * Two-phase processing:
- *   Phase 1: Persist raw event immediately — never loses an event even if
- *             processing fails. Provides idempotency + audit trail.
+ *   Phase 1: Persist raw event immediately (idempotency guard + audit trail).
  *   Phase 2: Process the event synchronously.
  *
  * Always returns HTTP 200 — DocuSign retries on non-2xx.
@@ -54,19 +53,27 @@ public class DocuSignWebhookController {
             // PRODUCTION: uncomment before go-live
             // validateHmac(rawBody, hmacSig);
 
+            // Phase 1: parse → idempotency check → persist raw event
             Map<String, Object> payload = objectMapper.readValue(rawBody, new TypeReference<>() {});
             String envelopeId = extractString(payload, "envelopeId");
             String eventType  = extractString(payload, "event");
 
             log.info("[DocuSign Webhook] envelopeId={}, eventType={}", envelopeId, eventType);
 
-            // Phase 1: persist raw event for idempotency
+            // Idempotency: skip duplicate event types for the same envelope
+            // (DocuSign may retry if it didn't receive a 200 in time)
+            if (envelopeId != null && eventType != null
+                    && eventRepo.existsByEnvelopeIdAndEventType(envelopeId, eventType)) {
+                log.info("[DocuSign Webhook] Duplicate suppressed: envelopeId={}, eventType={}", envelopeId, eventType);
+                return ResponseEntity.ok(ApiResponse.ok("duplicate-suppressed"));
+            }
+
             DocuSignEvent event = eventRepo.save(DocuSignEvent.builder()
-                .envelopeId(envelopeId != null ? envelopeId : "UNKNOWN-" + UUID.randomUUID())
-                .eventType(eventType)
-                .rawPayload(payload)
-                .processed(false)
-                .build());
+                    .envelopeId(envelopeId != null ? envelopeId : "UNKNOWN-" + UUID.randomUUID())
+                    .eventType(eventType)
+                    .rawPayload(payload)
+                    .processed(false)
+                    .build());
 
             // Phase 2: process
             processEvent(event);
@@ -79,7 +86,7 @@ public class DocuSignWebhookController {
         return ResponseEntity.ok(ApiResponse.ok("received"));
     }
 
-    // ── Event dispatch ────────────────────────────────────────────────
+    // ── Event dispatch ────────────────────────────────────────────────────────
 
     private void processEvent(DocuSignEvent event) {
         try {
@@ -99,6 +106,7 @@ public class DocuSignWebhookController {
                 case "envelope-voided"    -> handleVoided(sub);
                 default -> log.info("[DocuSign Webhook] Unhandled eventType={}", et);
             }
+
             markProcessed(event, null);
 
         } catch (Exception e) {
@@ -108,15 +116,22 @@ public class DocuSignWebhookController {
         }
     }
 
-    // ── Handlers ──────────────────────────────────────────────────────
+    // ── Handlers ──────────────────────────────────────────────────────────────
 
+    /**
+     * envelope-completed: mark the submission as SIGNED.
+     *
+     * Sprint 2 stub: generates a placeholder UUID for the signed document.
+     * Sprint 3 TODO: download actual PDF bytes from DocuSign and store in MinIO,
+     *               then pass the real MinIO document UUID to markSigned().
+     */
     private void handleCompleted(FormSubmission sub) {
         log.info("[DocuSign] envelope-completed: submissionId={}", sub.getId());
-        // STUB: generate placeholder UUID — Sprint 2: download from DocuSign + store in MinIO
+        // STUB — replace with real MinIO UUID after downloading from DocuSign
         UUID stubDocId = UUID.randomUUID();
-        sub.markSigned(stubDocId);
+        sub.markSigned(stubDocId);          // sets status=SIGNED, docuSignStatus=completed, signedDocumentId
         submissionRepo.save(sub);
-        eventPublisher.publishSigned(sub);
+        eventPublisher.publishSigned(sub);  // notifies ecm-workflow → moves instance to SIGNED status
     }
 
     private void handleDeclined(FormSubmission sub, Map<String, Object> payload) {
@@ -134,7 +149,7 @@ public class DocuSignWebhookController {
         submissionRepo.save(sub);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
     private String extractString(Map<String, Object> map, String key) {
@@ -156,7 +171,7 @@ public class DocuSignWebhookController {
         eventRepo.save(event);
     }
 
-    // ── HMAC Validation (enable before production) ────────────────────
+    // ── HMAC Validation (enable before production) ────────────────────────────
     //
     // @Autowired DocuSignProperties props;
     //

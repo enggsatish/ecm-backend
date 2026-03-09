@@ -91,10 +91,10 @@ public class FormEventPublisher {
 
     private void publish(String routingKey, Object payload) {
         try {
-            rabbit.convertAndSend(EFormsRabbitConfig.EXCHANGE, routingKey, payload);
-            log.debug("Published event: exchange={}, routingKey={}", EFormsRabbitConfig.EXCHANGE, routingKey);
+            rabbit.convertAndSend(EFormsRabbitConfig.EFORMS_EXCHANGE, routingKey, payload);
+            log.debug("Published event: exchange={}, routingKey={}", EFormsRabbitConfig.EFORMS_EXCHANGE, routingKey);
         } catch (Exception e) {
-            log.error("Failed to publish event to {}/{}: {}", EFormsRabbitConfig.EXCHANGE, routingKey, e.getMessage());
+            log.error("Failed to publish event to {}/{}: {}", EFormsRabbitConfig.EFORMS_EXCHANGE, routingKey, e.getMessage());
         }
     }
 }

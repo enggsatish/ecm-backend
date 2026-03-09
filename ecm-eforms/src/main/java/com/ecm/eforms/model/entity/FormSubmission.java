@@ -121,6 +121,15 @@ public class FormSubmission {
     @Column(name = "reviewed_at")
     private OffsetDateTime reviewedAt;
 
+    // ── Party linkage ────────────────────────────────────────────────────
+    /**
+     * Soft reference to the party this submission is on behalf of.
+     * Value = PartyDto.externalId. Added by V2 migration.
+     * Copied to ecm_core.documents.party_external_id on document promotion.
+     */
+    @Column(name = "party_external_id", length = 100)
+    private String partyExternalId;
+
     // ── Request metadata ──────────────────────────────────────────────
 
     @Column(nullable = false)
@@ -168,5 +177,11 @@ public class FormSubmission {
         this.status     = "IN_REVIEW";
         this.assignedTo = reviewerId;
         this.assignedAt = OffsetDateTime.now();
+    }
+
+    public enum Status {
+        APPROVED,
+        REJECTED,
+        WITHDRAWN;
     }
 }

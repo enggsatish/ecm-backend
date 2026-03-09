@@ -70,6 +70,14 @@ okta:
 ecm:
   security:
     allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:4200}
+  eforms:
+    # ── Dev mode ─────────────────────────────────────────────────────────────
+    # When true, form submissions bypass DocuSign and workflow review.
+    # The PDF is generated (with a dummy "auto-approved" stamp), stored to MinIO,
+    # and a document record is written immediately.
+    # FormSubmission.status goes straight to APPROVED.
+    # Set to false (or remove) before deploying to any shared environment.
+    dev-mode: ${ECM_EFORMS_DEV_MODE:false}
 
   minio:
     endpoint:   ${MINIO_ENDPOINT:http://localhost:9000}
@@ -80,7 +88,12 @@ ecm:
       temp:      ecm-temp
       templates: ecm-templates
       archive:   ecm-archive
-
+  services:
+    # Internal HTTP URL for DocumentPromotionClient — used when promoting
+    # approved form PDFs to ecm-document. Must be the direct service URL
+    # (not the gateway) because the call uses X-Internal-Service header auth,
+    # not an Okta JWT. Override with DOCUMENT_SERVICE_URL env var in Docker/k8s.
+    document-url: ${DOCUMENT_SERVICE_URL:http://localhost:8082}
   docusign:
     enabled:          false                # true when credentials are ready
     integration-key:  ${DOCUSIGN_INTEGRATION_KEY:stub-key}

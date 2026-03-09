@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  logback-spring.xml
+  Place in: src/main/resources/ of each ECM module.
+
+  Uses Spring profile-conditional appenders:
+    local / default → coloured console, human-readable
+    azure  / prod   → rolling JSON files for Log Analytics / OpenSearch ingestion
+
+  MDC keys surfaced (populated by RequestMdcFilter):
+    traceId, userId, userEmail, method, path
+-->
+<configuration>
+
+    <!-- Pull spring.application.name from application.yml into the log context -->
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name"
+                    defaultValue="ecm-service"/>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         LOCAL / DEFAULT — coloured, human-readable console
+         ════════════════════════════════════════════════════════════════════════ -->
+    <springProfile name="local,default">
+
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <!--
+                  Pattern breakdown:
+                    %d{HH:mm:ss.SSS}                  — timestamp
+                    %highlight(%-5level)               — coloured level
+                    [%-20.20thread]                    — thread name (truncated)
+                    [%X{traceId:- no-trace }]         — MDC trace ID (blank when absent)
+                    %-40.40logger{39}                  — logger class (shortened)
+                    %msg%n                             — message + newline
+                -->
+                <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%cyan(%-20.20thread)] [%yellow(%X{traceId:- no-trace  })] %cyan(%-40.40logger{39}) : %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <!-- ECM application code at DEBUG; everything else at INFO -->
+        <logger name="com.ecm" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+
+        <!-- Framework noise suppression -->
+        <logger name="org.flowable"                      level="WARN"/>
+        <logger name="org.springframework.security"      level="WARN"/>
+        <logger name="org.springframework.web"           level="WARN"/>
+        <logger name="org.springframework.amqp"          level="WARN"/>
+        <logger name="org.flywaydb"                      level="INFO"/>
+        <logger name="io.minio"                          level="WARN"/>
+        <logger name="org.hibernate.SQL"                 level="WARN"/>  <!-- DEBUG to see SQL -->
+        <logger name="org.hibernate.type.descriptor.sql" level="WARN"/>  <!-- TRACE for bind params -->
+        <logger name="org.opensearch"                    level="WARN"/>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+
+    </springProfile>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         AZURE / PROD — JSON rolling files
+         Requires: net.logstash.logback:logstash-logback-encoder on classpath
+         ════════════════════════════════════════════════════════════════════════ -->
+    <springProfile name="azure,prod">
+
+        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>/Users/satishkumar/ideaworkspace/ecm-platform/Logs/${APP_NAME}.log</file>
+
+            <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+                <fileNamePattern>/Users/satishkumar/ideaworkspace/ecm-platform/Logs/${APP_NAME}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <timeBasedFileNamingAndTriggeringPolicy
+                        class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                    <maxFileSize>100MB</maxFileSize>
+                </timeBasedFileNamingAndTriggeringPolicy>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>1GB</totalSizeCap>
+                <cleanHistoryOnStart>true</cleanHistoryOnStart>
+            </rollingPolicy>
+
+            <!--
+              LogstashEncoder outputs one JSON object per line.
+              Each MDC key becomes a top-level JSON field — fully queryable in
+              Azure Log Analytics (KQL) and OpenSearch (Lucene/DSL).
+            -->
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <includeMdcKeyName>traceId</includeMdcKeyName>
+                <includeMdcKeyName>userId</includeMdcKeyName>
+                <includeMdcKeyName>userEmail</includeMdcKeyName>
+                <includeMdcKeyName>method</includeMdcKeyName>
+                <includeMdcKeyName>path</includeMdcKeyName>
+                <customFields>{"app":"${APP_NAME}","env":"prod"}</customFields>
+                <!-- Include stack traces as a single JSON field (no multiline noise) -->
+                <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                    <maxDepthPerCause>20</maxDepthPerCause>
+                    <shortenedClassNameLength>20</shortenedClassNameLength>
+                    <rootCauseFirst>true</rootCauseFirst>
+                </throwableConverter>
+            </encoder>
+        </appender>
+
+        <!-- Async wrapper — I/O happens off the request thread -->
+        <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+            <appender-ref ref="FILE"/>
+            <queueSize>2048</queueSize>
+            <discardingThreshold>0</discardingThreshold>  <!-- never drop log events -->
+            <neverBlock>false</neverBlock>
+        </appender>
+
+        <logger name="com.ecm"                           level="INFO"/>
+        <logger name="org.flowable"                      level="WARN"/>
+        <logger name="org.springframework.security"      level="WARN"/>
+        <logger name="org.flywaydb"                      level="WARN"/>
+        <logger name="org.springframework.amqp"          level="WARN"/>
+        <logger name="io.minio"                          level="WARN"/>
+        <logger name="org.hibernate.SQL"                 level="WARN"/>
+        <logger name="org.opensearch"                    level="WARN"/>
+
+        <root level="INFO">
+            <appender-ref ref="ASYNC_FILE"/>
+        </root>
+
+    </springProfile>
+
+</configuration>

@@ -13,6 +13,9 @@ public interface DocuSignEventRepository extends JpaRepository<DocuSignEvent, UU
     /** All events for an envelope — ordered for audit trail */
     List<DocuSignEvent> findByEnvelopeIdOrderByReceivedAtAsc(String envelopeId);
 
-    /** Unprocessed events — for a retry scheduler (Sprint 2) */
+    /** Idempotency check — was this exact event type already received for this envelope? */
+    boolean existsByEnvelopeIdAndEventType(String envelopeId, String eventType);
+
+    /** Unprocessed events — for a retry scheduler */
     List<DocuSignEvent> findByProcessedFalseOrderByReceivedAtAsc();
 }

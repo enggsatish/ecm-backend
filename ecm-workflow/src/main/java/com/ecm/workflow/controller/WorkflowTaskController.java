@@ -1,57 +1,95 @@
 package com.ecm.workflow.controller;
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ * FIX 1 — WorkflowTaskController NPE: @AuthenticationPrincipal JwtAuthenticationToken
+ *
+ * ROOT CAUSE (confirmed from actual source):
+ *   The controller declares parameters typed as JwtAuthenticationToken:
+ *
+ *     @AuthenticationPrincipal JwtAuthenticationToken auth
+ *
+ *   @AuthenticationPrincipal resolves Authentication.getPrincipal().
+ *   With spring-boot-starter-oauth2-resource-server, Spring Security stores a
+ *   JwtAuthenticationToken in the SecurityContext.  getPrincipal() on that object
+ *   returns the inner Jwt object — NOT the JwtAuthenticationToken itself.
+ *
+ *   Spring sees that Jwt ≠ JwtAuthenticationToken → injects null.
+ *   Every subsequent call auth.getToken().getSubject() → NullPointerException.
+ *
+ *   This is why endpoints like /inbox, /claim, /approve, /reject, /request-info,
+ *   /pass all throw NPE at runtime, even though the code compiles cleanly.
+ *
+ *   Note: @AuthenticationPrincipal Jwt jwt  (already used in /my, /unclaim,
+ *   /release, /provide-info) is CORRECT because getPrincipal() IS a Jwt.
+ *
+ * FIX:
+ *   Change the broken annotations from @AuthenticationPrincipal JwtAuthenticationToken
+ *   to plain Authentication (no annotation). Spring MVC resolves unannotated
+ *   Authentication parameters directly from the SecurityContext as the full
+ *   Authentication object — which IS the JwtAuthenticationToken. Then cast safely.
+ *
+ *   Affected methods: inbox, pending, queue, claim, approve, reject,
+ *                     request-info, pass.
+ *
+ * PATTERN (apply identically to every affected endpoint):
+ *
+ *   BEFORE (broken):
+ *     @AuthenticationPrincipal JwtAuthenticationToken auth
+ *     ...
+ *     auth.getToken().getSubject()          // NPE — auth is null
+ *
+ *   AFTER (fixed):
+ *     Authentication auth                    // no annotation; Spring injects full Authentication
+ *     ...
+ *     jwtAuth(auth).getToken().getSubject() // safe via helper below
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+
 import com.ecm.common.audit.AuditLog;
 import com.ecm.common.model.ApiResponse;
 import com.ecm.workflow.dto.WorkflowDtos.*;
 import com.ecm.workflow.service.EcmTaskService;
+import com.ecm.workflow.service.WorkflowTaskHistoryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;                          // ← ADD
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-/* * Task inbox and action endpoints.
- *
- * GET  /api/workflow/tasks/inbox      — full inbox (claimed + available pool)
- * GET  /api/workflow/tasks/pending    — unclaimed pool tasks for my groups
- * GET  /api/workflow/tasks/my         — tasks I have claimed
- * GET  /api/workflow/tasks/{id}       — single task detail
- * POST /api/workflow/tasks/{id}/claim         — claim from pool
- * POST /api/workflow/tasks/{id}/unclaim       — return to pool
- * POST /api/workflow/tasks/{id}/approve       — approve document
- * POST /api/workflow/tasks/{id}/reject        — reject document (comment required)
- * POST /api/workflow/tasks/{id}/request-info  — request more information
- * POST /api/workflow/tasks/{id}/pass          — pass to specialist (triage only)
- */
+import java.util.UUID;
+
 @Slf4j
 @RestController
 @RequestMapping("/api/workflow/tasks")
 @RequiredArgsConstructor
 public class WorkflowTaskController {
 
-    private final EcmTaskService taskService;
+    private final EcmTaskService             taskService;
+    private final WorkflowTaskHistoryService historyService;
 
-    // ── Inbox / list ──────────────────────────────────────────────────────
+    // ── Inbox / list ─────────────────────────────────────────────────────────
 
     @GetMapping("/inbox")
     public ResponseEntity<ApiResponse<List<WorkflowTaskDto>>> inbox(
-            @AuthenticationPrincipal JwtAuthenticationToken auth) {
+            Authentication auth) {                                    // ← FIXED (was @AuthenticationPrincipal JwtAuthenticationToken auth)
 
         return ResponseEntity.ok(ApiResponse.ok(
                 taskService.getMyInbox(
-                        auth.getToken().getSubject(),
+                        jwtAuth(auth).getToken().getSubject(),
                         extractCandidateGroups(auth))));
     }
 
     @GetMapping("/pending")
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
     public ResponseEntity<ApiResponse<List<WorkflowTaskDto>>> pending(
-            @AuthenticationPrincipal JwtAuthenticationToken auth) {
+            Authentication auth) {                                    // ← FIXED
 
         return ResponseEntity.ok(ApiResponse.ok(
                 taskService.getPendingTasksForGroups(extractCandidateGroups(auth))));
@@ -59,10 +97,32 @@ public class WorkflowTaskController {
 
     @GetMapping("/my")
     public ResponseEntity<ApiResponse<List<WorkflowTaskDto>>> my(
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt) {                      // ← already correct
 
         return ResponseEntity.ok(ApiResponse.ok(
                 taskService.getMyTasks(jwt.getSubject())));
+    }
+
+    @GetMapping("/queue")
+    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    public ResponseEntity<ApiResponse<List<TaskQueueItemDto>>> getQueue(
+            @RequestParam(defaultValue = "false") boolean assignedToMe,
+            Authentication auth) {                                    // ← FIXED
+
+        if (auth == null) {
+            return ResponseEntity.status(401)
+                    .body(ApiResponse.error("Unauthorized for /queue", "UNAUTHORIZED"));
+        }
+
+        JwtAuthenticationToken jwtAuth = jwtAuth(auth);
+        String       subject = jwtAuth.getToken().getSubject();
+        List<String> groups  = extractCandidateGroupsRaw(jwtAuth);
+
+        List<TaskQueueItemDto> items = assignedToMe
+                ? taskService.getMyQueueItems(subject)
+                : taskService.getQueueItems(subject, groups);
+
+        return ResponseEntity.ok(ApiResponse.ok(items));
     }
 
     @GetMapping("/{taskId}")
@@ -72,19 +132,36 @@ public class WorkflowTaskController {
         return ResponseEntity.ok(ApiResponse.ok(taskService.getTask(taskId)));
     }
 
-    // ── Task actions ──────────────────────────────────────────────────────
+    @GetMapping("/{taskId}/history")
+    public ResponseEntity<ApiResponse<List<TaskHistoryDto>>> getHistory(
+            @PathVariable String taskId) {
+        return ResponseEntity.ok(ApiResponse.ok(historyService.getHistoryForTask(taskId)));
+    }
+
+    // ── Claim / Unclaim / Release ─────────────────────────────────────────────
 
     @PostMapping("/{taskId}/claim")
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
     @AuditLog(event = "TASK_CLAIMED", resourceType = "WORKFLOW_TASK")
     public ResponseEntity<ApiResponse<WorkflowTaskDto>> claim(
             @PathVariable String taskId,
-            @AuthenticationPrincipal JwtAuthenticationToken auth) {
+            Authentication auth) {                                    // ← FIXED
 
+        JwtAuthenticationToken jwtAuth = jwtAuth(auth);
         WorkflowTaskDto task = taskService.claim(
                 taskId,
-                auth.getToken().getSubject(),
+                jwtAuth.getToken().getSubject(),
                 extractCandidateGroups(auth));
+
+        historyService.record(
+                taskId,
+                task.processInstanceId(),
+                "CLAIMED",
+                jwtAuth.getToken().getSubject(),
+                jwtAuth.getToken().getClaimAsString("email"),
+                null,
+                parseDocumentId(task.documentId()));
+
         return ResponseEntity.ok(ApiResponse.ok(task, "Task claimed successfully"));
     }
 
@@ -92,11 +169,36 @@ public class WorkflowTaskController {
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
     public ResponseEntity<ApiResponse<Void>> unclaim(
             @PathVariable String taskId,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt) {                      // ← already correct
 
         taskService.unclaim(taskId, jwt.getSubject());
         return ResponseEntity.ok(ApiResponse.ok(null, "Task returned to pool"));
     }
+
+    @PostMapping("/{taskId}/release")
+    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @AuditLog(event = "TASK_RELEASED", resourceType = "WORKFLOW_TASK")
+    public ResponseEntity<ApiResponse<Void>> release(
+            @PathVariable String taskId,
+            @RequestBody(required = false) ReleaseTaskRequest req,
+            @AuthenticationPrincipal Jwt jwt) {                      // ← already correct
+
+        WorkflowTaskDto task = taskService.getTask(taskId);
+        taskService.unclaim(taskId, jwt.getSubject());
+
+        historyService.record(
+                taskId,
+                task.processInstanceId(),
+                "RELEASED",
+                jwt.getSubject(),
+                jwt.getClaimAsString("email"),
+                req != null ? req.comment() : null,
+                parseDocumentId(task.documentId()));
+
+        return ResponseEntity.ok(ApiResponse.ok(null, "Task returned to queue"));
+    }
+
+    // ── Approve ───────────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/approve")
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
@@ -104,12 +206,26 @@ public class WorkflowTaskController {
     public ResponseEntity<ApiResponse<Void>> approve(
             @PathVariable String taskId,
             @RequestBody @Valid TaskActionRequest req,
-            @AuthenticationPrincipal JwtAuthenticationToken auth) {
+            Authentication auth) {                                    // ← FIXED
 
-        taskService.approve(taskId, req, auth.getToken().getSubject(),
+        JwtAuthenticationToken jwtAuth = jwtAuth(auth);
+        WorkflowTaskDto task = taskService.getTask(taskId);
+        taskService.approve(taskId, req, jwtAuth.getToken().getSubject(),
                 extractCandidateGroups(auth));
+
+        historyService.record(
+                taskId,
+                task.processInstanceId(),
+                "APPROVED",
+                jwtAuth.getToken().getSubject(),
+                jwtAuth.getToken().getClaimAsString("email"),
+                req.comment(),
+                parseDocumentId(task.documentId()));
+
         return ResponseEntity.ok(ApiResponse.ok(null, "Document approved"));
     }
+
+    // ── Reject ────────────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/reject")
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
@@ -117,12 +233,31 @@ public class WorkflowTaskController {
     public ResponseEntity<ApiResponse<Void>> reject(
             @PathVariable String taskId,
             @RequestBody @Valid TaskActionRequest req,
-            @AuthenticationPrincipal JwtAuthenticationToken auth) {
+            Authentication auth) {                                    // ← FIXED
 
-        taskService.reject(taskId, req, auth.getToken().getSubject(),
+        if (req.comment() == null || req.comment().isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Rejection reason is required", "VALIDATION_ERROR"));
+        }
+
+        JwtAuthenticationToken jwtAuth = jwtAuth(auth);
+        WorkflowTaskDto task = taskService.getTask(taskId);
+        taskService.reject(taskId, req, jwtAuth.getToken().getSubject(),
                 extractCandidateGroups(auth));
+
+        historyService.record(
+                taskId,
+                task.processInstanceId(),
+                "REJECTED",
+                jwtAuth.getToken().getSubject(),
+                jwtAuth.getToken().getClaimAsString("email"),
+                req.comment(),
+                parseDocumentId(task.documentId()));
+
         return ResponseEntity.ok(ApiResponse.ok(null, "Document rejected"));
     }
+
+    // ── Request Info ──────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/request-info")
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
@@ -130,13 +265,27 @@ public class WorkflowTaskController {
     public ResponseEntity<ApiResponse<Void>> requestInfo(
             @PathVariable String taskId,
             @RequestBody @Valid TaskActionRequest req,
-            @AuthenticationPrincipal JwtAuthenticationToken auth) {
+            Authentication auth) {                                    // ← FIXED
 
-        taskService.requestInfo(taskId, req, auth.getToken().getSubject(),
+        JwtAuthenticationToken jwtAuth = jwtAuth(auth);
+        WorkflowTaskDto task = taskService.getTask(taskId);
+        taskService.requestInfo(taskId, req, jwtAuth.getToken().getSubject(),
                 extractCandidateGroups(auth));
+
+        historyService.record(
+                taskId,
+                task.processInstanceId(),
+                "INFO_REQUESTED",
+                jwtAuth.getToken().getSubject(),
+                jwtAuth.getToken().getClaimAsString("email"),
+                req.comment(),
+                parseDocumentId(task.documentId()));
+
         return ResponseEntity.ok(ApiResponse.ok(null,
                 "Additional information requested from submitter"));
     }
+
+    // ── Pass ──────────────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/pass")
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
@@ -144,50 +293,73 @@ public class WorkflowTaskController {
     public ResponseEntity<ApiResponse<Void>> pass(
             @PathVariable String taskId,
             @RequestBody @Valid TaskActionRequest req,
-            @AuthenticationPrincipal JwtAuthenticationToken auth) {
+            Authentication auth) {                                    // ← FIXED
 
-        taskService.pass(taskId, req, auth.getToken().getSubject(),
+        taskService.pass(taskId, req, jwtAuth(auth).getToken().getSubject(),
                 extractCandidateGroups(auth));
         return ResponseEntity.ok(ApiResponse.ok(null, "Document passed to specialist"));
     }
 
-    /**
-     * Submitter provides information after a REQUEST_INFO decision.
-     * Only the user assigned to the "Provide Additional Information" task
-     * may call this. Visible to any authenticated user — the task-level
-     * assignee check inside EcmTaskService enforces ownership.
-     *
-     * POST /api/workflow/tasks/{taskId}/provide-info
-     * Body: { "comment": "Here is the additional information..." }
-     */
+    // ── Provide Info ──────────────────────────────────────────────────────────
+
     @PostMapping("/{taskId}/provide-info")
     @AuditLog(event = "INFO_PROVIDED", resourceType = "WORKFLOW_TASK")
     public ResponseEntity<ApiResponse<WorkflowTaskDto>> provideInfo(
             @PathVariable String taskId,
             @RequestBody @Valid ProvideInfoRequest req,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt) {                      // ← already correct
 
         WorkflowTaskDto result = taskService.provideInfo(taskId, req.comment(), jwt.getSubject());
-        return ResponseEntity.ok(ApiResponse.ok(result, "Information provided — document returned to reviewer queue"));
+        return ResponseEntity.ok(ApiResponse.ok(result,
+                "Information provided — document returned to reviewer queue"));
     }
 
-    // ── Helper ────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
-     * Extract Flowable-compatible candidate group strings from the JWT.
+     * Safe cast helper.
      *
-     * Okta groups arrive as ROLE_ECM_BACKOFFICE etc. after EcmJwtConverter.
-     * We strip ROLE_ prefix so they match what Flowable stores as candidateGroup.
-     *
-     * Example: ROLE_ECM_BACKOFFICE → ECM_BACKOFFICE
-     * Also includes group keys like "group:3" if they're in the JWT
-     * (custom Okta claim or future enhancement).
+     * Spring MVC injects Authentication (no annotation) as the full SecurityContext
+     * Authentication, which with oauth2-resource-server is always JwtAuthenticationToken.
+     * If for any reason the cast fails (e.g. different auth filter), we return 401 via
+     * the RuntimeException which triggers GlobalExceptionHandler.
      */
-    private List<String> extractCandidateGroups(JwtAuthenticationToken auth) {
+    private JwtAuthenticationToken jwtAuth(Authentication auth) {
+        if (auth instanceof JwtAuthenticationToken jwtAuth) {
+            return jwtAuth;
+        }
+        throw new org.springframework.security.access.AccessDeniedException(
+                "JWT authentication required — received: " +
+                        (auth != null ? auth.getClass().getSimpleName() : "null"));
+    }
+
+    /**
+     * Strips ROLE_ prefix so group names match Flowable candidateGroup values.
+     * Works with any Authentication whose authorities carry ROLE_ECM_* prefixes.
+     */
+    private List<String> extractCandidateGroups(Authentication auth) {
         return auth.getAuthorities().stream()
                 .map(a -> a.getAuthority())
                 .filter(a -> a.startsWith("ROLE_ECM_"))
                 .map(a -> a.replaceFirst("^ROLE_", ""))
                 .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> extractCandidateGroupsRaw(JwtAuthenticationToken auth) {
+        Object groups = auth.getToken().getClaim("groups");
+        if (groups instanceof List<?> list) {
+            return list.stream().map(Object::toString).toList();
+        }
+        return extractCandidateGroups(auth);
+    }
+
+    private UUID parseDocumentId(String documentId) {
+        if (documentId == null || documentId.isBlank()) return null;
+        try {
+            return UUID.fromString(documentId);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }

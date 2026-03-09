@@ -1,6 +1,11 @@
 package com.ecm.document.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -24,7 +29,11 @@ import java.util.UUID;
 public class Document {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
+    // @GeneratedValue INTENTIONALLY REMOVED.
+    // DocumentServiceImpl.upload() generates documentId = UUID.randomUUID() and passes
+    // it to Document.builder().id(documentId). Keeping @GeneratedValue causes Hibernate
+    // to generate a SECOND UUID at INSERT time, discarding the builder-set value.
+    // That makes the publishOcrEvent fallback use a stale ID → "document missing" in OpenSearch.
     @Column(updatable = false, nullable = false)
     private UUID id;
 
@@ -125,4 +134,7 @@ public class Document {
     /** Soft ref → ecm_admin.product_lines.id */
     @Column(name = "product_line_id")
     private Integer productLineId;
+
+    @Column(name = "party_external_id", length = 100)
+    private String partyExternalId;
 }

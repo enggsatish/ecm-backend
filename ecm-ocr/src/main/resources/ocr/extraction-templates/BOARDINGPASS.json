@@ -1,0 +1,56 @@
+{
+  "documentId": "0564603c-4a1b-4e2d-9f83-b2c1a7e8d501",
+  "documentType": "BOARDING_PASS",
+  "extractedAt": "2026-03-07T14:22:10.341Z",
+  "ocrEngine": "TIKA_TESSERACT",
+  "confidence": 0.94,
+  "status": "EXTRACTED",
+
+  "passenger": {
+    "firstName": "JOHN",
+    "lastName": "DOE",
+    "fullName": "DOE/JOHN MR",
+    "frequentFlyerNumber": "AC987654",
+    "frequentFlyerProgram": "AEROPLAN",
+    "seatNumber": "14A",
+    "seatClass": "ECONOMY",
+    "sequenceNumber": "0042",
+    "eTicketNumber": "014-4421987654"
+  },
+
+  "flight": {
+    "flightNumber": "AC8821",
+    "carrier": {
+      "code": "AC",
+      "name": "Air Canada"
+    },
+    "origin": {
+      "iataCode": "YYC",
+      "city": "Calgary",
+      "terminal": "D",
+      "gate": "D72"
+    },
+    "destination": {
+      "iataCode": "YYZ",
+      "city": "Toronto",
+      "terminal": "1",
+      "gate": null
+    },
+    "departureDate": "2026-03-07",
+    "departureTime": "08:15",
+    "arrivalTime": "13:45",
+    "boardingTime": "07:45",
+    "boardingGroup": "GROUP 3",
+    "operatedBy": null
+  },
+
+  "baggage": {
+    "checkedBags": 1,
+    "carryOnAllowed": true,
+    "baggageTagNumbers": ["AC129834"]
+  },
+
+  "barcodes": [
+    {
+      "format": "PDF417",
+      "rawData": "M1DOE/JOHN MREZABCD YYCYYЗAC8821 077C,

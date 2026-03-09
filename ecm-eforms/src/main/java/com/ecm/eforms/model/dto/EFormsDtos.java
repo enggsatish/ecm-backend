@@ -105,12 +105,14 @@ public class EFormsDtos {
 
     @Data
     public static class SubmitFormRequest {
-        @NotBlank private String          formKey;
-        private Integer                   formVersion;   // null = use latest PUBLISHED
+        @NotBlank private String             formKey;
+        private Integer                      formVersion;      // null = use latest PUBLISHED
         @NotNull  private Map<String, Object> submissionData;
-        private boolean                   draft   = false;
-        private String                    channel = "WEB";
+        private boolean                      draft   = false;
+        private String                       channel = "WEB";
         private UUID                         existingSubmissionId;
+        /** Soft ref to PartyDto.externalId — set from Step 1 of FormFillPage. Optional. */
+        private String                       partyExternalId;
     }
 
     @Data
@@ -136,6 +138,7 @@ public class EFormsDtos {
         private String               submittedBy;
         private String               submittedByName;
         private OffsetDateTime       submittedAt;
+        private String               partyExternalId;     // soft ref to party
         private String               docuSignEnvelopeId;
         private String               docuSignStatus;
         private OffsetDateTime       docuSignSentAt;

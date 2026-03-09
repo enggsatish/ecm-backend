@@ -126,7 +126,14 @@ services:
       retries: 10
     networks:
       - ecm-network
-
+  # ─── Tesseract OCR (dev only) ─────────────────────────────────
+  tesseract-ocr:
+    image: hertzg/tesseract-server:latest
+    container_name: ecm-tesseract
+    ports:
+      - "8884:3000"
+    networks:
+      - ecm-network
   # ─── pgAdmin ──────────────────────────────────────────────────
   pgadmin:
     image: dpage/pgadmin4:latest

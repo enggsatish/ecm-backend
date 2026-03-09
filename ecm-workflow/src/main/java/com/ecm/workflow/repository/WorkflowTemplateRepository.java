@@ -13,4 +13,6 @@ public interface WorkflowTemplateRepository extends JpaRepository<WorkflowTempla
 
     @Query("SELECT t FROM WorkflowTemplate t WHERE t.status = 'PUBLISHED' ORDER BY t.isDefault ASC, t.id ASC")
     List<WorkflowTemplate> findAllPublished();
+
+    Optional<WorkflowTemplate> findByProcessKeyAndStatus(String s, WorkflowTemplate.Status status);
 }

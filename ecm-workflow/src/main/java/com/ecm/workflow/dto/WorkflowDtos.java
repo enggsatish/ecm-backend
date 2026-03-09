@@ -44,6 +44,9 @@ public class WorkflowDtos {
             @NotBlank String comment
     ) {}
 
+    /** Release a claimed task back to the group queue. */
+    public record ReleaseTaskRequest(String comment) {}
+
     // ── Admin request DTOs (moved from WorkflowDefinitionController inner records) ──
 
     /** Add a user to a workflow group. */
@@ -162,5 +165,43 @@ public class WorkflowDtos {
             LocalDateTime slaDeadline,
             LocalDateTime escalationDeadline,
             String  escalationGroupKey) {}
+    /**
+     * Enriched task queue item — includes party context and SLA status.
+     * Used by GET /api/workflow/tasks/queue
+     */
+    public record TaskQueueItemDto(
+            String taskId,
+            String taskName,
+            String processInstanceId,
+            String documentId,
+            String documentName,
+            // Party context (null if triggered by direct document upload without party)
+            String partyExternalId,
+            String partyDisplayName,
+            String partyType,
+            // eForm context (null if triggered by direct document upload)
+            String formName,
+            String submissionId,
+            // Assignment
+            String assignee,
+            String assigneeEmail,
+            // SLA
+            java.time.OffsetDateTime slaDeadline,
+            String slaStatus,              // ON_TRACK | WARNING | ESCALATED | BREACHED
+            java.time.OffsetDateTime createdAt
+    ) {}
 
+    /**
+     * A single row from workflow_task_history.
+     */
+    public record TaskHistoryDto(
+            Long id,
+            String taskId,
+            String processInstanceId,
+            String action,
+            String actorSubject,
+            String actorEmail,
+            String comment,
+            java.time.OffsetDateTime createdAt
+    ) {}
 }

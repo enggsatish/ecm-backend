@@ -82,6 +82,33 @@ public class BpmnGeneratorService {
             case INFO_WAIT  -> generateInfoWait(step, xml, flows, declared);
             case PARALLEL_TASKS -> generateParallelTasks(step, dsl, xml, flows, declared);
             case NOTIFICATION   -> generateNotification(step, xml, flows, declared);
+            case DOCUSIGN -> generateDocuSignTask(step, xml, flows, declared);
+        }
+    }
+    private void generateDocuSignTask(DslStep step, StringBuilder xml,
+                                      List<String> flows, Set<String> declared) {
+        xml.append(String.format("""
+              <serviceTask id="%s" name="%s"
+                  flowable:delegateExpression="${docuSignDelegate}">
+                <extensionElements>
+                  <flowable:field name="subjectTemplate"
+                      stringValue="%s"/>
+                  <flowable:field name="recipientEmailVar"
+                      stringValue="%s"/>
+                </extensionElements>
+              </serviceTask>
+            """,
+                step.getId(),
+                escape(step.getName()),
+                escape(step.getDocusignSubjectTemplate() != null
+                        ? step.getDocusignSubjectTemplate() : "Please sign your document"),
+                escape(step.getDocusignRecipientEmailVar() != null
+                        ? step.getDocusignRecipientEmailVar() : "submitterEmail")));
+        declared.add(step.getId());
+
+        if (!step.getOutcomes().isEmpty()) {
+            flows.add(sequenceFlow("flow_" + step.getId() + "_next",
+                    step.getId(), step.getOutcomes().get(0).getNext(), null));
         }
     }
 
@@ -98,7 +125,7 @@ public class BpmnGeneratorService {
                       flowable:formFieldValidation="false">
                     <extensionElements>
                       <flowable:taskListener event="complete"
-                          class="com.ecm.workflow.flowable.TaskCompletionListener"/>
+                          delegateExpression="${taskCompletedListener}"/>
                     </extensionElements>
                   </userTask>
                 """, step.getId(), escape(step.getName()), groupExpr));
@@ -134,7 +161,7 @@ public class BpmnGeneratorService {
                       flowable:formFieldValidation="false">
                     <extensionElements>
                       <flowable:taskListener event="complete"
-                          class="com.ecm.workflow.flowable.TaskCompletionListener"/>
+                          delegateExpression="${taskCompletedListener}"/>
                     </extensionElements>
                   </userTask>
                 """, step.getId(), escape(step.getName())));
@@ -167,7 +194,7 @@ public class BpmnGeneratorService {
                           flowable:formFieldValidation="false">
                         <extensionElements>
                           <flowable:taskListener event="complete"
-                              class="com.ecm.workflow.flowable.TaskCompletionListener"/>
+                              delegateExpression="${taskCompletedListener}"/>
                         </extensionElements>
                       </userTask>
                     """, sub.getId(), escape(sub.getName()), groupExpr));

@@ -1,0 +1,16 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ecm-document  V1__baseline.sql
+--
+-- PURPOSE:
+--   Baseline marker after schema bootstrapped from init_v3.sql.
+--
+-- IMPORTANT:
+--   Delete the old migration files:
+--     V1__add_segment_product_columns.sql
+--     V5__add_segment_context.sql
+--   These have been folded into init_v3.sql.
+--
+--   Place this file at:
+--     ecm-document/src/main/resources/db/migration/V1__baseline.sql
+-- ─────────────────────────────────────────────────────────────────────────────
+SELECT 1;

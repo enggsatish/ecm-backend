@@ -23,4 +23,5 @@ public interface WorkflowInstanceRecordRepository
             String startedBySubject, Pageable pageable);
 
     Page<WorkflowInstanceRecord> findAllByOrderByCreatedAtDesc(Pageable pageable);
+
 }

@@ -79,7 +79,9 @@ flowable:
 
   # IDM engine: disabled — Okta and our ecm-identity service handle identity
   idm:
-    enabled: false
+    enabled: true
+  app:
+    enabled: true
 
   # History level: audit captures task start/end/assignee changes
   history-level: audit

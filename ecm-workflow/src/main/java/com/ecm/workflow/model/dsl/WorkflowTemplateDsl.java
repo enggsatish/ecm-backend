@@ -33,6 +33,10 @@ public class WorkflowTemplateDsl {
 
         /** Variable key from 'variables' map whose value is the Flowable candidate group */
         private String candidateGroupVariable;
+        // Fields read by BpmnGeneratorService when type == DOCUSIGN
+        private String docusignSubjectTemplate;   // e.g. "Please sign: {documentName}"
+        private String docusignRecipientEmailVar; // process variable name holding email
+        private String docusignRecipientNameVar;  // process variable name holding name
 
         /** For PARALLEL_TASKS: list of sub-tasks */
         private List<DslStep> parallelTasks = List.of();
@@ -64,6 +68,7 @@ public class WorkflowTemplateDsl {
         USER_TASK,
         PARALLEL_TASKS,
         INFO_WAIT,
-        NOTIFICATION
+        NOTIFICATION,
+        DOCUSIGN
     }
 }
