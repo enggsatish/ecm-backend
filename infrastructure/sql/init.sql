@@ -893,23 +893,6 @@ VALUES
      'document-compliance-review', 'ECM_REVIEWER', TRUE, 24)
     ON CONFLICT DO NOTHING;
 
--- ─────────────────────────────────────────────────────────────────────────────
--- ecm_workflow: Default Templates
--- ─────────────────────────────────────────────────────────────────────────────
-INSERT INTO ecm_workflow.workflow_templates
-(name, description, process_key, dsl_definition, bpmn_source, status, is_default, sla_hours)
-VALUES
-    ('Default Single Review',
-     'Default workflow template for general document review.',
-     'document-single-review',
-     '{"processKey":"document-single-review","name":"Default Single Review","triggerType":"MANUAL","steps":[],"variables":{},"endStates":[]}'::jsonb,
-     'DSL', 'PUBLISHED', TRUE, 48),
-    ('Mortgage Dual Review',
-     'Two-stage review for mortgage applications.',
-     'mortgage-dual-review',
-     '{"processKey":"mortgage-dual-review","name":"Mortgage Dual Review","triggerType":"FORM_SUBMIT","variables":{"reviewerGroup":"ECM_REVIEWER","backofficeGroup":"ECM_BACKOFFICE"},"steps":[],"endStates":[]}'::jsonb,
-     'DSL', 'DRAFT', FALSE, 24)
-    ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_forms: Product Types

@@ -68,11 +68,11 @@ flowable:
   database-schema-update: true
 
   # Deploy BPMN files from classpath:processes/ on startup
-  check-process-definitions: true
-  process-definition-location-prefix: classpath:/processes/
-  process-definition-location-suffixes:
-    - "**.bpmn20.xml"
-    - "**.bpmn"
+  check-process-definitions: false # made it false so no default workflows are created. and comment below lines
+  #process-definition-location-prefix: classpath:/processes/
+  #process-definition-location-suffixes:
+  #  - "**.bpmn20.xml"
+  #  - "**.bpmn"
 
   # Async executor: disabled for PoC (timers, boundary events), enable for prod
   async-executor-activate: false

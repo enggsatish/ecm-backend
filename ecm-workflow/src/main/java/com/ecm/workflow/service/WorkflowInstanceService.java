@@ -22,10 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Manages workflow instance lifecycle:
@@ -314,10 +311,16 @@ public class WorkflowInstanceService {
      *  - initiator    → uploadedBy (Okta subject — used by INFO_WAIT tasks)
      *  - templateId   → template PK for traceability
      *
+     * Returns null if no WorkflowDefinitionConfig exists for the template's processKey.
+     * This is a configuration gap (publish didn't auto-create the config) — the caller
+     * (DocumentUploadedListener) logs a warning and ACKs the message cleanly rather than
+     * re-throwing to the DLQ.  Re-publishing the template via the Workflow Designer will
+     * create the missing config row and resolve the issue going forward.
+     *
      * @param documentId  ECM document identifier
      * @param template    Resolved published WorkflowTemplate
      * @param uploadedBy  Okta subject of the user who uploaded the document
-     * @return UUID of the persisted WorkflowInstanceRecord
+     * @return UUID of the persisted WorkflowInstanceRecord, or null on config gap
      */
     @Transactional
     public UUID startFromTemplate(String documentId, WorkflowTemplate template, String uploadedBy) {
@@ -332,13 +335,21 @@ public class WorkflowInstanceService {
                             + template.getId());
         }
 
-        // Resolve WorkflowDefinitionConfig by processKey — required FK on the record
-        WorkflowDefinitionConfig definitionConfig = workflowDefinitionConfigRepo
-                .findByProcessKey(template.getProcessKey())
-                .orElseThrow(() -> new IllegalStateException(
-                        "No WorkflowDefinitionConfig found for processKey: "
-                                + template.getProcessKey()
-                                + ". Ensure the template was published and definition synced."));
+        // Resolve WorkflowDefinitionConfig by processKey — required FK on the record.
+        // WorkflowTemplateService.publish() auto-creates this row, but if the template
+        // was published before that logic was added, the row may be missing.
+        // Return null (config gap) rather than throwing so the caller can ACK cleanly.
+        Optional<WorkflowDefinitionConfig> configOpt =
+                workflowDefinitionConfigRepo.findByProcessKey(template.getProcessKey());
+
+        if (configOpt.isEmpty()) {
+            log.warn("No WorkflowDefinitionConfig found for processKey='{}' (templateId={}). " +
+                            "Re-publish the template in the Workflow Designer to create the missing config.",
+                    template.getProcessKey(), template.getId());
+            return null;  // caller treats null as a config gap — ACKs cleanly, no DLQ
+        }
+
+        WorkflowDefinitionConfig definitionConfig = configOpt.get();
 
         // Build Flowable process variables
         Map<String, Object> processVariables = new HashMap<>();
@@ -357,12 +368,12 @@ public class WorkflowInstanceService {
                         "DOC-" + documentId,
                         processVariables);
 
-        // Persist tracking record — field names match entity exactly
+        // Persist tracking record
         WorkflowInstanceRecord record = WorkflowInstanceRecord.builder()
                 .processInstanceId(flowableInstance.getId())
-                .documentId(UUID.fromString(documentId))          // String → UUID
-                .workflowDefinition(definitionConfig)             // required FK
-                .startedBySubject(uploadedBy)                     // correct field name
+                .documentId(UUID.fromString(documentId))
+                .workflowDefinition(definitionConfig)
+                .startedBySubject(uploadedBy)
                 .triggerType(WorkflowInstanceRecord.TriggerType.AUTO)
                 .status(WorkflowInstanceRecord.Status.ACTIVE)
                 .templateId(template.getId())

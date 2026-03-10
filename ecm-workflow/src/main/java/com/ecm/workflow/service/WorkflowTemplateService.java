@@ -1,9 +1,11 @@
 package com.ecm.workflow.service;
 
 import com.ecm.workflow.model.dsl.WorkflowTemplateDsl;
+import com.ecm.workflow.model.entity.WorkflowDefinitionConfig;
 import com.ecm.workflow.model.entity.WorkflowTemplate;
 import com.ecm.workflow.model.entity.WorkflowTemplate.BpmnSource;
 import com.ecm.workflow.model.entity.WorkflowTemplateMapping;
+import com.ecm.workflow.repository.WorkflowDefinitionConfigRepository;
 import com.ecm.workflow.repository.WorkflowTemplateMappingRepository;
 import com.ecm.workflow.repository.WorkflowTemplateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -24,6 +27,10 @@ public class WorkflowTemplateService {
     private final BpmnGeneratorService bpmnGenerator;
     private final FlowableDeploymentService deploymentService;
     private final ObjectMapper objectMapper;
+    // Injected to sync WorkflowDefinitionConfig on publish — fixes the
+    // "No WorkflowDefinitionConfig found for processKey" IllegalStateException
+    // that occurs when startFromTemplate() is called by the document upload listener.
+    private final WorkflowDefinitionConfigRepository definitionConfigRepo;
 
     // ─── CRUD ────────────────────────────────────────────────────────────────
 
@@ -130,7 +137,15 @@ public class WorkflowTemplateService {
 
     /**
      * Publish: resolve the BPMN XML (stored or generated), deploy to Flowable,
-     * and mark the template PUBLISHED.
+     * mark the template PUBLISHED, and upsert a WorkflowDefinitionConfig row.
+     *
+     * <p>The WorkflowDefinitionConfig upsert is the key fix: WorkflowInstanceService
+     * .startFromTemplate() looks up a WorkflowDefinitionConfig by processKey as a
+     * required FK on WorkflowInstanceRecord. Without this step, every document upload
+     * that triggers the listener throws:
+     * <pre>
+     *   IllegalStateException: No WorkflowDefinitionConfig found for processKey: &lt;key&gt;
+     * </pre>
      */
     @Transactional
     public WorkflowTemplate publish(Integer id) {
@@ -166,9 +181,41 @@ public class WorkflowTemplateService {
         template.setStatus(WorkflowTemplate.Status.PUBLISHED);
         template.setVersion(result.version());
 
+        WorkflowTemplate saved = templateRepo.save(template);
+
+        // ── Sync WorkflowDefinitionConfig ──────────────────────────────────
+        // Create the config row if it does not already exist for this processKey.
+        // This is required because WorkflowInstanceService.startFromTemplate()
+        // looks up WorkflowDefinitionConfig by processKey as an FK on
+        // WorkflowInstanceRecord.  Without this row the listener dead-letters
+        // every document.uploaded RabbitMQ message with IllegalStateException.
+        //
+        // If a row already exists (e.g. back-filled by V5 migration or created
+        // manually by an admin) we leave it untouched to preserve any custom
+        // group assignments or SLA overrides.
+        Optional<WorkflowDefinitionConfig> existing =
+                definitionConfigRepo.findByProcessKey(result.processDefinitionKey());
+
+        if (existing.isEmpty()) {
+            WorkflowDefinitionConfig config = WorkflowDefinitionConfig.builder()
+                    .name(saved.getName())
+                    .description("Auto-created on publish of template id=" + saved.getId())
+                    .processKey(result.processDefinitionKey())
+                    .assignedRole("ECM_BACKOFFICE")   // default; admin can reassign via UI
+                    .isActive(true)
+                    .slaHours(saved.getSlaHours())
+                    .build();
+            definitionConfigRepo.save(config);
+            log.info("WorkflowDefinitionConfig created for processKey={}", result.processDefinitionKey());
+        } else {
+            log.debug("WorkflowDefinitionConfig already exists for processKey={} — skipping",
+                    result.processDefinitionKey());
+        }
+        // ───────────────────────────────────────────────────────────────────
+
         log.info("Template '{}' published → processKey={} v{}",
-                template.getName(), result.processDefinitionKey(), result.version());
-        return templateRepo.save(template);
+                saved.getName(), result.processDefinitionKey(), result.version());
+        return saved;
     }
 
     /**
@@ -220,7 +267,7 @@ public class WorkflowTemplateService {
      * Best-effort extraction of the process/@name attribute from BPMN XML.
      * Returns empty if the attribute is absent or the XML is malformed.
      */
-    private java.util.Optional<String> extractProcessName(String bpmnXml) {
+    private Optional<String> extractProcessName(String bpmnXml) {
         try {
             // Lightweight regex; we avoid full DOM parse for performance
             java.util.regex.Matcher m = java.util.regex.Pattern
@@ -228,9 +275,9 @@ public class WorkflowTemplateService {
                     .matcher(bpmnXml);
             if (m.find()) {
                 String name = m.group(1).trim();
-                return name.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(name);
+                return name.isBlank() ? Optional.empty() : Optional.of(name);
             }
         } catch (Exception ignored) { /* non-fatal */ }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 }
