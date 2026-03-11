@@ -4,36 +4,41 @@ import org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCust
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 
 import java.time.Duration;
 
 /**
- * Redis-backed cache configuration for ecm-identity.
+ * Redis cache configuration for ecm-identity.
  *
- * WHY THIS IS SEPARATE FROM EcmIdentityApplication:
- * @EnableCaching was previously on the main class without any CacheManager bean.
- * Spring silently fell back to ConcurrentMapCache (in-memory, not shared between
- * instances, cleared on restart). This is production-incorrect behaviour.
- *
- * This class enables caching properly with Redis as the store. Cached data
- * is shared across all identity service instances and survives restarts.
- *
- * Cache regions:
- *   "users"    — User entity lookups by entraObjectId, TTL 10 minutes
- *   "sessions" — UserSessionDto, TTL 5 minutes (aligned with frontend staleTime)
+ * Sprint G addition: explicit StringRedisTemplate bean used by EnrichmentService
+ * for direct key/value operations (ecm:user:enrich:{sub} cache entries).
+ * Spring Boot auto-configures a default StringRedisTemplate, but declaring it
+ * explicitly ensures it is wired correctly alongside the caching infrastructure.
  */
 @Configuration
 @EnableCaching
 public class RedisCacheConfig {
 
+    /**
+     * StringRedisTemplate for direct cache key operations.
+     * Used by EnrichmentService to read/write/delete ecm:user:enrich:{sub} keys.
+     */
+    @Bean
+    @Primary
+    public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory connectionFactory) {
+        return new StringRedisTemplate(connectionFactory);
+    }
+
     @Bean
     public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer() {
         return (builder) -> builder
                 // User lookups: cache for 10 minutes
-                // Invalidated on user deactivation (call cache.evict in IdentityService)
                 .withCacheConfiguration("users",
                         RedisCacheConfiguration.defaultCacheConfig()
                                 .entryTtl(Duration.ofMinutes(10))

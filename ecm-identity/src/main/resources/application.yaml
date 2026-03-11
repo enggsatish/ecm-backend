@@ -42,6 +42,9 @@ spring:
     default-schema:       ecm_core
     schemas:              ecm_core,ecm_audit,ecm_forms
     baseline-on-migrate:  true
+    out-of-order: true
+
+
 
   # ── Redis ──────────────────────────────────────────────────────────────────
   data:

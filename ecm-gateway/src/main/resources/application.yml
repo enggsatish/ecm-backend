@@ -81,6 +81,11 @@ okta:
 
 # ── ECM service URLs ──────────────────────────────────────────────────────────
 ecm:
+  identity:
+    url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
+  enrichment:
+    timeout-ms: 2000
+    cache-ttl-minutes: 15
   services:
     identity-url:  ${IDENTITY_SERVICE_URL:http://localhost:8081}
     document-url:  ${DOCUMENT_SERVICE_URL:http://localhost:8082}

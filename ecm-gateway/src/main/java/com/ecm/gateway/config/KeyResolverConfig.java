@@ -3,6 +3,7 @@ package com.ecm.gateway.config;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import reactor.core.publisher.Mono;
 
 import java.security.Principal;
@@ -35,6 +36,7 @@ public class KeyResolverConfig {
      * Key format in Redis: request_rate_limiter.{jwtSubject}.tokens
      *                      request_rate_limiter.{jwtSubject}.timestamp
      */
+    @Primary
     @Bean
     public KeyResolver userKeyResolver() {
         return exchange -> exchange.getPrincipal()

@@ -57,6 +57,21 @@ public class UserAdminController {
         return ResponseEntity.ok(ApiResponse.ok(service.removeRole(id, roleName), "Role removed"));
     }
 
+    /**
+     * Pre-register a user before their first SSO login.
+     * Creates a pending users row + assigns an initial role.
+     * The account activates automatically when the user first authenticates via EntraID/Okta.
+     *
+     * POST /api/admin/users/invite
+     * Body: { email, displayName?, departmentId?, initialRole? }
+     */
+    @PostMapping("/invite")
+    public ResponseEntity<ApiResponse<AdminUserDto>> invite(
+            @Valid @RequestBody AdminUserDto.InviteRequest req) {
+        return ResponseEntity.status(201)
+                .body(ApiResponse.ok(service.inviteUser(req), "User invited"));
+    }
+
     @PostMapping("/{id}/deactivate")
     public ResponseEntity<ApiResponse<Void>> deactivate(
             @PathVariable Integer id, @AuthenticationPrincipal Jwt jwt) {

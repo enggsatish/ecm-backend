@@ -32,6 +32,7 @@ spring:
     locations:           classpath:db/migration
     baseline-on-migrate: true
     schemas:             ecm_forms,ecm_core,ecm_audit
+    ignore-migration-patterns: "*:missing"
 
   rabbitmq:
     host:         ${RABBITMQ_HOST:localhost}

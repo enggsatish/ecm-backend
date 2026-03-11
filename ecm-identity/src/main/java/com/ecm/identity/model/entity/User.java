@@ -25,8 +25,10 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
-    @Column(name = "entra_object_id", nullable = false, unique = true)
-    private String entraObjectId;      // Okta subject (sub claim)
+    // nullable = true: admin-invited users are inserted with entra_object_id = NULL.
+    // The sub is bound on first SSO login via IdentityService.syncUserFromToken().
+    @Column(name = "entra_object_id", nullable = true, unique = true)
+    private String entraObjectId;      // Okta sub claim — null until first login for invited users
 
     @Column(nullable = false, unique = true)
     private String email;

@@ -15,6 +15,7 @@ public class UserProfileDto {
     private String         displayName;
     private Integer        departmentId;
     private String         departmentName;
+    private String         entraObjectId;
     private Set<String>    roles;
     private Boolean        isActive;
     private OffsetDateTime lastLogin;

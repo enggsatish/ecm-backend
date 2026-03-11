@@ -6,72 +6,76 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
 /**
- * Rate limiter policies using Spring Cloud Gateway's built-in Redis rate limiter.
+ * Rate limiter configuration for ECM Gateway.
  *
- * Algorithm: Token Bucket (sliding window approximation)
- *   - replenishRate:    tokens added per second (sustained throughput)
- *   - burstCapacity:    maximum tokens at any instant (burst allowance)
- *   - requestedTokens:  cost per request (always 1 here)
+ * Defines TWO RedisRateLimiter beans matching the @Qualifier names
+ * that RouteConfig injects:
+ *   - "defaultRateLimiter"  @Primary → general API endpoints (20 req/s, burst 40)
+ *   - "uploadRateLimiter"            → document upload endpoint (5 req/s, burst 10)
  *
- * IMPORTANT: Each method MUST be @Bean so Spring manages the RedisRateLimiter
- * instance and auto-injects the required ReactiveStringRedisTemplate dependency.
- * Plain "new RedisRateLimiter(...)" without @Bean leaves the internal
- * ReactiveStringRedisTemplate null, causing NullPointerException on first request.
+ * NOTE: KeyResolver is defined separately in KeyResolverConfig — it is NOT
+ * defined here. Defining it in both classes caused:
+ *   "expected single matching bean but found 2: userKeyResolver, principalNameKeyResolver"
  *
- * The rate limiter key is the JWT subject (user ID) from KeyResolverConfig —
- * each user gets their own token bucket. Unauthenticated requests are rejected
- * by the security filter before reaching the rate limiter.
+ * WHY @Primary on defaultRateLimiter:
+ *   GatewayAutoConfiguration's requestRateLimiterGatewayFilterFactory injects
+ *   RateLimiter<?> without a @Qualifier. With two beans of the same type,
+ *   Spring cannot choose and fails with "expected single matching bean but found 2".
+ *   @Primary designates defaultRateLimiter for all unqualified injection points.
+ *   RouteConfig injects both beans by explicit @Qualifier, unaffected by @Primary.
  *
- * Redis keys: request_rate_limiter.{userId}.{tokens|timestamp}
- * These expire automatically after burstCapacity/replenishRate seconds.
+ * WHY includeHeaders = false on both:
+ *   Spring WebFlux locks response headers (ReadOnlyHttpHeaders) the moment
+ *   the downstream service begins writing its response body. RedisRateLimiter
+ *   writes X-RateLimit-* headers in an async callback that fires AFTER the
+ *   response has already committed — throwing UnsupportedOperationException
+ *   and causing Netty to drop the connection mid-stream (ERR_INCOMPLETE_CHUNKED_ENCODING).
+ *
+ *   includeHeaders = false disables ONLY the response header writing.
+ *   Rate limiting enforcement (allow/deny via Redis token bucket) is completely
+ *   unaffected — requests are still throttled and 429 is returned when exhausted.
+ *
+ * Observability without X-RateLimit-* response headers:
+ *   - 429 responses appear in RequestLoggingFilter access logs
+ *   - Actuator: GET /actuator/metrics/spring.cloud.gateway.requests
+ *   - Redis keys: request_rate_limiter.{key}.tokens / .timestamp
  */
 @Configuration
 public class RateLimiterConfig {
 
     /**
-     * Default policy: 20 requests/second sustained, burst up to 40.
-     * Applied to: /api/auth/**, /api/users/**, /api/documents/**
+     * Default rate limiter — applied to all general API routes.
      *
-     * @Primary — required because GatewayAutoConfiguration's
-     * requestRateLimiterGatewayFilterFactory needs exactly ONE RateLimiter bean
-     * for its constructor. Without @Primary, having 3 RedisRateLimiter beans
-     * causes "expected single bean but 3 found" at startup.
-     * Routes that need uploadRateLimiter or adminRateLimiter inject them
-     * directly via @Qualifier, which always takes precedence over @Primary.
+     * @Primary required so GatewayAutoConfiguration's unqualified
+     * RateLimiter<?> injection point resolves without ambiguity.
+     *
+     * replenishRate   = 20  → steady-state requests per second per user
+     * burstCapacity   = 40  → token bucket ceiling (allows short bursts)
+     * requestedTokens = 1   → each request consumes 1 token
      */
     @Primary
-    @Bean(name = "defaultRateLimiter")
+    @Bean("defaultRateLimiter")
     public RedisRateLimiter defaultRateLimiter() {
-        return new RedisRateLimiter(
-                20,   // replenishRate: 20 tokens/second = 1200/minute sustained
-                40,   // burstCapacity: up to 40 simultaneous requests
-                1     // requestedTokens: each request costs 1 token
-        );
+        RedisRateLimiter limiter = new RedisRateLimiter(20, 40, 1);
+        limiter.setIncludeHeaders(false);
+        return limiter;
     }
 
     /**
-     * Upload policy: stricter — 2 uploads/second, burst of 5.
-     * Applied to: POST /api/documents/upload
+     * Upload rate limiter — applied to POST /api/documents/upload only.
+     *
+     * Tighter limits because uploads are expensive: MinIO write, OCR queue
+     * publish to RabbitMQ, workflow trigger. A user uploading at 5 docs/sec
+     * is almost certainly a script, not a human operator.
+     *
+     * replenishRate   = 5   → 5 uploads per second per user
+     * burstCapacity   = 10  → allows a quick burst of 10 before throttling
+     * requestedTokens = 1
      */
-    @Bean(name = "uploadRateLimiter")
+    @Bean("uploadRateLimiter")
     public RedisRateLimiter uploadRateLimiter() {
-        return new RedisRateLimiter(
-                2,    // 2 uploads/second
-                5,    // burst of 5
-                1
-        );
-    }
-
-    /**
-     * Admin policy: tighter for sensitive admin operations.
-     * Applied to: /api/admin/** (when ecm-admin module is built)
-     */
-    @Bean(name = "adminRateLimiter")
-    public RedisRateLimiter adminRateLimiter() {
-        return new RedisRateLimiter(
-                5,
-                10,
-                1
-        );
+        RedisRateLimiter limiter = new RedisRateLimiter(5, 10, 1);
+        limiter.setIncludeHeaders(false);
+        return limiter;
     }
 }

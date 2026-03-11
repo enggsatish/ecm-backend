@@ -77,4 +77,29 @@ public class AdminUserDto {
         public String getRoleName()              { return roleName; }
         public void setRoleName(String v)        { this.roleName = v; }
     }
+
+    // ── Invite request ─────────────────────────────────────────────────────
+    // Creates a pending user record. The account activates on first SSO login
+    // when EcmJwtConverter matches the email and assigns the initialRole.
+    public static class InviteRequest {
+        @NotBlank
+        private String email;
+
+        @Size(max = 200)
+        private String displayName;
+
+        private Integer departmentId;
+
+        // Role to assign immediately; defaults to ECM_READONLY if omitted
+        private String initialRole;
+
+        public String getEmail()                 { return email; }
+        public void setEmail(String v)           { this.email = v; }
+        public String getDisplayName()           { return displayName; }
+        public void setDisplayName(String v)     { this.displayName = v; }
+        public Integer getDepartmentId()         { return departmentId; }
+        public void setDepartmentId(Integer v)   { this.departmentId = v; }
+        public String getInitialRole()           { return initialRole; }
+        public void setInitialRole(String v)     { this.initialRole = v; }
+    }
 }

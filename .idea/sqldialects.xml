@@ -3,5 +3,6 @@
   <component name="SqlDialectMappings">
     <file url="file://$PROJECT_DIR$/Logs/V4__seed_workflow_templates.sql" dialect="GenericSQL" />
     <file url="file://$PROJECT_DIR$/Logs/V5__seed_workflow_definition_configs.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/ecm-identity/src/main/resources/db/migration/V5__rbac_permissions.sql" dialect="GenericSQL" />
   </component>
 </project>
