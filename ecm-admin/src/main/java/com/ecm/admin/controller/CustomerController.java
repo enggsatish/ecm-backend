@@ -57,12 +57,12 @@ public class CustomerController {
         return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
-    // ── Get by ID ─────────────────────────────────────────────────────────────
+    // ── Get by ID (with enrollments) ───────────────────────────────────────────
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
     public ResponseEntity<ApiResponse<PartyDto>> getById(@PathVariable UUID id) {
-        return ResponseEntity.ok(ApiResponse.ok(partyService.getById(id)));
+        return ResponseEntity.ok(ApiResponse.ok(partyService.getByIdWithEnrollments(id)));
     }
 
     // ── Create ────────────────────────────────────────────────────────────────
@@ -110,5 +110,29 @@ public class CustomerController {
         log.info("Deactivate party id={} by={}", id, jwt.getSubject());
         partyService.deactivate(id);
         return ResponseEntity.ok(ApiResponse.ok(null, "Customer deactivated"));
+    }
+
+    // ── Product Enrollments ────────────────────────────────────────────────
+
+    @PostMapping("/{id}/enrollments")
+    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    public ResponseEntity<ApiResponse<PartyDto>> addEnrollment(
+            @PathVariable UUID id,
+            @RequestBody PartyDto.EnrollmentRequest req,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        PartyDto result = partyService.addEnrollment(id, req, jwt.getSubject());
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(result, "Enrollment added"));
+    }
+
+    @DeleteMapping("/{id}/enrollments/{enrollmentId}")
+    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    public ResponseEntity<ApiResponse<Void>> removeEnrollment(
+            @PathVariable UUID id,
+            @PathVariable Integer enrollmentId
+    ) {
+        partyService.removeEnrollment(id, enrollmentId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Enrollment removed"));
     }
 }

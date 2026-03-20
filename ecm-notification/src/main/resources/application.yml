@@ -1,0 +1,129 @@
+spring:
+  application:
+    name: ecm-notification
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ecmdb
+    username: ecmuser
+    password: ecmpassword
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: NotificationServicePool
+      maximum-pool-size: 5
+      minimum-idle: 2
+
+  # No JPA entities — this module uses JdbcTemplate only (cross-schema reads/writes)
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # No Flyway — notifications table is in ecm_core (managed by init.sql)
+  flyway:
+    enabled: false
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: ecmredispassword
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: ecmrabbit
+    password: ecmrabbitpassword
+    virtual-host: ecm
+
+  # ── Email (Spring Mail) ─────────────────────────────────────────────────────
+  # Dev: Mailpit (localhost:1025, no auth, no TLS)
+  # Prod: real SMTP via azure profile
+  mail:
+    host: localhost
+    port: 1025
+    properties:
+      mail.smtp.auth: false
+      mail.smtp.starttls.enable: false
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697
+
+server:
+  port: 8088
+
+okta:
+  oauth2:
+    audience: api://sso-default
+
+ecm:
+  security:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
+  notification:
+    from-email: ${NOTIFICATION_FROM:noreply@ecm.dev.local}
+    from-name: ${NOTIFICATION_FROM_NAME:ECM Platform}
+    email-enabled: ${NOTIFICATION_EMAIL_ENABLED:true}
+    app-url: ${ECM_APP_URL:http://localhost:3000}
+    batch-interval-ms: ${NOTIFICATION_BATCH_INTERVAL:300000}  # 5 minutes
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+  endpoint:
+    health:
+      show-details: always
+  health:
+    mail:
+      enabled: false           # Mailpit doesn't support SMTP health checks
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+
+logging:
+  level:
+    com.ecm.notification: DEBUG
+    org.springframework.security: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: azure
+  datasource:
+    url: ${AZURE_DB_URL}
+    username: ${AZURE_DB_USER}
+    password: ${AZURE_DB_PASS}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OKTA_ISSUER_URI}
+  rabbitmq:
+    host: ${RABBITMQ_HOST}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASS}
+    virtual-host: ${RABBITMQ_VHOST:ecm}
+  mail:
+    host: ${SMTP_HOST}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USER}
+    password: ${SMTP_PASS}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true

@@ -2,11 +2,9 @@ package com.ecm.workflow.service;
 
 import com.ecm.common.exception.ResourceNotFoundException;
 import com.ecm.workflow.dto.WorkflowDtos.*;
-import com.ecm.workflow.model.entity.CategoryWorkflowMapping;
 import com.ecm.workflow.model.entity.WorkflowDefinitionConfig;
 import com.ecm.workflow.model.entity.WorkflowGroup;
 import com.ecm.workflow.model.entity.WorkflowGroupMember;
-import com.ecm.workflow.repository.CategoryWorkflowMappingRepository;
 import com.ecm.workflow.repository.WorkflowDefinitionConfigRepository;
 import com.ecm.workflow.repository.WorkflowGroupMemberRepository;
 import com.ecm.workflow.repository.WorkflowGroupRepository;
@@ -39,7 +37,6 @@ public class WorkflowAdminService {
     private final WorkflowDefinitionConfigRepository definitionRepo;
     private final WorkflowGroupRepository            groupRepo;
     private final WorkflowGroupMemberRepository      memberRepo;
-    private final CategoryWorkflowMappingRepository  categoryMappingRepo;
 
     // ── Workflow Definitions ──────────────────────────────────────────────────
 
@@ -142,45 +139,6 @@ public class WorkflowAdminService {
     public void removeMember(Integer groupId, Integer userId) {
         memberRepo.deleteByGroupIdAndUserId(groupId, userId);
         log.info("User {} removed from workflow group {}", userId, groupId);
-    }
-
-    // ── Category Workflow Mappings ────────────────────────────────────────────
-
-    @Transactional(readOnly = true)
-    public List<CategoryMappingDto> listCategoryMappings() {
-        return categoryMappingRepo.findAll().stream()
-                .map(m -> new CategoryMappingDto(
-                        m.getId(),
-                        m.getCategoryId(),
-                        m.getWorkflowDefinition().getId(),
-                        m.getWorkflowDefinition().getName(),
-                        m.getIsActive()))
-                .toList();
-    }
-
-    @Transactional
-    public CategoryMappingDto createCategoryMapping(CreateCategoryMappingRequest req) {
-        WorkflowDefinitionConfig def = definitionRepo.findById(req.workflowDefinitionId())
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "WorkflowDefinition", req.workflowDefinitionId()));
-
-        CategoryWorkflowMapping mapping = CategoryWorkflowMapping.builder()
-                .categoryId(req.categoryId())
-                .workflowDefinition(def)
-                .build();
-        mapping = categoryMappingRepo.save(mapping);
-
-        log.info("Category mapping created: categoryId={} → workflow={}",
-                req.categoryId(), def.getName());
-        return new CategoryMappingDto(
-                mapping.getId(), mapping.getCategoryId(),
-                def.getId(), def.getName(), true);
-    }
-
-    @Transactional
-    public void deleteCategoryMapping(Integer id) {
-        categoryMappingRepo.deleteById(id);
-        log.info("Category mapping deleted: id={}", id);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

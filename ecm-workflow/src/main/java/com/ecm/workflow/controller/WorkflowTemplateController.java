@@ -4,7 +4,6 @@ import com.ecm.common.audit.AuditLog;
 import com.ecm.common.model.ApiResponse;
 import com.ecm.workflow.model.dsl.WorkflowTemplateDsl;
 import com.ecm.workflow.model.entity.WorkflowTemplate;
-import com.ecm.workflow.model.entity.WorkflowTemplateMapping;
 import com.ecm.workflow.service.WorkflowTemplateService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -118,35 +117,6 @@ public class WorkflowTemplateController {
         return ResponseEntity.ok(service.previewBpmn(id));
     }
 
-    // ─── Mappings ────────────────────────────────────────────────────────────
-
-    @GetMapping("/{id}/mappings")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_DESIGNER')")
-    public ResponseEntity<ApiResponse<List<WorkflowTemplateMapping>>> getMappings(
-            @PathVariable Integer id) {
-        return ResponseEntity.ok(ApiResponse.ok(service.getMappings(id)));
-    }
-
-    @PostMapping("/{id}/mappings")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
-    @AuditLog(event = "TEMPLATE_MAPPING_ADDED", resourceType = "WORKFLOW_TEMPLATE")
-    public ResponseEntity<ApiResponse<WorkflowTemplateMapping>> addMapping(
-            @PathVariable Integer id,
-            @RequestBody MappingRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(
-                ApiResponse.ok(service.addMapping(id, req.productId(), req.categoryId(), req.priority()),
-                        "Mapping added"));
-    }
-
-    @DeleteMapping("/{id}/mappings/{mappingId}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
-    @AuditLog(event = "TEMPLATE_MAPPING_REMOVED", resourceType = "WORKFLOW_TEMPLATE")
-    public ResponseEntity<ApiResponse<Void>> removeMapping(
-            @PathVariable Integer id, @PathVariable Integer mappingId) {
-        service.removeMapping(mappingId);
-        return ResponseEntity.ok(ApiResponse.ok(null, "Mapping removed"));
-    }
-
     // ─── Request records ─────────────────────────────────────────────────────
 
     public record CreateTemplateRequest(
@@ -155,11 +125,5 @@ public class WorkflowTemplateController {
             Integer warningThresholdPct,
             Integer escalationHours,
             String escalationGroupKey
-    ) {}
-
-    public record MappingRequest(
-            Integer productId,
-            Integer categoryId,
-            Integer priority
     ) {}
 }

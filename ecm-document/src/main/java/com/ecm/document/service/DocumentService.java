@@ -28,6 +28,8 @@ public interface DocumentService {
 
     PagedResponse<DocumentResponse> listAll(Pageable pageable);
 
+    PagedResponse<DocumentResponse> listByParty(String partyExternalId, Pageable pageable);
+
     DocumentResponse getById(UUID id);
 
     StorageObject download(UUID id);

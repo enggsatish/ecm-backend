@@ -17,23 +17,22 @@ public interface UserRepository extends JpaRepository<User, Integer> {
     Optional<User> findByEntraObjectId(String entraObjectId);
 
     /**
-     * Sprint G+: Used by EnrichmentService to detect admin-invited pending users.
+     * Detect admin-invited users awaiting first SSO login.
      *
      * An invited user has:
      *   - email matching the SSO login
-     *   - entra_object_id IS NULL  (not yet bound — first login)
-     *   - is_active = false        (pending activation)
+     *   - entra_object_id IS NULL (not yet bound to real SSO subject)
+     *   - is_active = true (created active by admin invite)
      *
-     * If found, EnrichmentService activates the account and binds the sub.
-     * JOIN FETCH roles so we can build the enrichment response immediately
-     * without a second query after activation.
+     * On first login, EnrichmentService binds the real sub (Okta user ID or
+     * Entra Object ID) from the JWT to this record.
+     * JOIN FETCH roles so we can build the enrichment response immediately.
      */
     @Query("""
         SELECT u FROM User u
         LEFT JOIN FETCH u.roles
         WHERE u.email = :email
-          AND u.entraObjectId = 'PENDING'
-          AND u.isActive = false
+          AND u.entraObjectId IS NULL
         """)
     Optional<User> findPendingByEmailWithRoles(@Param("email") String email);
 

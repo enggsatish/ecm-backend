@@ -1,56 +1,66 @@
 {
-  "documentId": "0564603c-4a1b-4e2d-9f83-b2c1a7e8d501",
-  "documentType": "BOARDING_PASS",
-  "extractedAt": "2026-03-07T14:22:10.341Z",
-  "ocrEngine": "TIKA_TESSERACT",
-  "confidence": 0.94,
-  "status": "EXTRACTED",
-
-  "passenger": {
-    "firstName": "JOHN",
-    "lastName": "DOE",
-    "fullName": "DOE/JOHN MR",
-    "frequentFlyerNumber": "AC987654",
-    "frequentFlyerProgram": "AEROPLAN",
-    "seatNumber": "14A",
-    "seatClass": "ECONOMY",
-    "sequenceNumber": "0042",
-    "eTicketNumber": "014-4421987654"
-  },
-
-  "flight": {
-    "flightNumber": "AC8821",
-    "carrier": {
-      "code": "AC",
-      "name": "Air Canada"
-    },
-    "origin": {
-      "iataCode": "YYC",
-      "city": "Calgary",
-      "terminal": "D",
-      "gate": "D72"
-    },
-    "destination": {
-      "iataCode": "YYZ",
-      "city": "Toronto",
-      "terminal": "1",
-      "gate": null
-    },
-    "departureDate": "2026-03-07",
-    "departureTime": "08:15",
-    "arrivalTime": "13:45",
-    "boardingTime": "07:45",
-    "boardingGroup": "GROUP 3",
-    "operatedBy": null
-  },
-
-  "baggage": {
-    "checkedBags": 1,
-    "carryOnAllowed": true,
-    "baggageTagNumbers": ["AC129834"]
-  },
-
-  "barcodes": [
+  "categoryCode": "BOARDINGPASS",
+  "description": "Airline boarding pass field extraction",
+  "fields": [
     {
-      "format": "PDF417",
-      "rawData": "M1DOE/JOHN MREZABCD YYCYYЗAC8821 077C,
+      "fieldName": "passenger_name",
+      "pattern": "(?:name|passenger)[:\\s]+([A-Z][A-Z/\\s]+[A-Z])",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "flight_number",
+      "pattern": "(?:flight|flt)[\\s#:]*([A-Z]{2}\\s?\\d{2,5})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "origin",
+      "pattern": "(?:from|departure|origin)[:\\s]*([A-Z]{3})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "destination",
+      "pattern": "(?:to|arrival|destination)[:\\s]*([A-Z]{3})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "departure_date",
+      "pattern": "(?:date|departs?)[:\\s]*(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{2}[A-Z]{3}\\d{2,4})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "departure_time",
+      "pattern": "(?:departs?|time|dep)[:\\s]*(\\d{1,2}:\\d{2}(?:\\s?[AP]M)?)",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "seat",
+      "pattern": "(?:seat)[:\\s]*([0-9]{1,3}[A-F])",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "gate",
+      "pattern": "(?:gate)[:\\s]*([A-Z]?\\d{1,3}[A-Z]?)",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "boarding_group",
+      "pattern": "(?:boarding|group)[:\\s]*(GROUP\\s*\\d+|[A-Z]\\d*)",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "ticket_number",
+      "pattern": "(?:ticket|eticket|e-ticket)[:\\s#]*(\\d{3}[-]?\\d{10}|\\d{13})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "frequent_flyer",
+      "pattern": "(?:frequent flyer|aeroplan|mileage|ffn)[:\\s#]*([A-Z0-9]{6,12})",
+      "defaultValue": ""
+    },
+    {
+      "fieldName": "carrier",
+      "pattern": "(?:carrier|airline|operated by)[:\\s]*([A-Z]{2})",
+      "defaultValue": ""
+    }
+  ]
+}

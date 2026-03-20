@@ -10,13 +10,16 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * Reactive HTTP client for ecm-identity's internal enrichment endpoint.
  *
- * Timeout: 2s connect + 2s read (total ~4s max wait).
- * The EcmRoleEnrichmentFilter handles WebClientRequestException (timeout/connection
- * refused) via onErrorResume — a timed-out call triggers the degraded-mode path.
+ * Timeout: 4s total (2s connect + 2s read).
+ * EcmRoleEnrichmentFilter handles timeout/connection errors via onErrorResume.
+ *
+ * Sprint G-fix: enrich() now accepts oktaGroups and forwards them to identity
+ * so fresh-DB bootstrap works without manual SQL.
  */
 @Slf4j
 @Component
@@ -39,11 +42,12 @@ public class IdentityEnrichmentClient {
     /**
      * POST /internal/auth/enrich
      *
-     * Returns Mono<EnrichmentResponseDto> that the filter flatMaps into.
-     * On network failure, the Mono errors — caller handles via onErrorResume.
+     * @param sub        JWT sub claim (entra_object_id)
+     * @param email      JWT email claim
+     * @param oktaGroups JWT groups claim — forwarded for first-run bootstrap detection
      */
-    public Mono<EnrichmentResponseDto> enrich(String sub, String email) {
-        EnrichmentRequestDto request = new EnrichmentRequestDto(sub, email);
+    public Mono<EnrichmentResponseDto> enrich(String sub, String email, List<String> oktaGroups) {
+        EnrichmentRequestDto request = new EnrichmentRequestDto(sub, email, oktaGroups);
 
         return webClient.post()
                 .uri("/internal/auth/enrich")

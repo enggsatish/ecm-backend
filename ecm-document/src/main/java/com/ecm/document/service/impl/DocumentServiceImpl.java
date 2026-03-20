@@ -65,6 +65,8 @@ public class DocumentServiceImpl implements DocumentService {
         UUID documentId = UUID.randomUUID();
 
         // 1. Store in MinIO first — generates blobPath with bucket prefix
+        log.info("document id : {} metadata : {} ", documentId, metadata);
+
         String blobPath = storageService.store(storageBucket, documentId, file, metadata);
 
         // 2. Resolve display name
@@ -144,6 +146,19 @@ public class DocumentServiceImpl implements DocumentService {
         return PagedResponse.of(
                 documentRepository
                         .findByStatusNotOrderByCreatedAtDesc(DocumentStatus.DELETED, safePageable)
+                        .map(documentMapper::toResponse)
+        );
+    }
+
+    // ── List by Party ─────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public PagedResponse<DocumentResponse> listByParty(String partyExternalId, Pageable pageable) {
+        return PagedResponse.of(
+                documentRepository
+                        .findByPartyExternalIdAndStatusNotOrderByCreatedAtDesc(
+                                partyExternalId, DocumentStatus.DELETED, pageable)
                         .map(documentMapper::toResponse)
         );
     }

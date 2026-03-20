@@ -171,8 +171,12 @@ public class EcmTaskService {
     /**
      * Request additional information from the submitter.
      * Comment is required (explains what info is needed).
-     * Also updates WorkflowInstanceRecord to INFO_REQUESTED so the submitter's
-     * dashboard highlights the pending action.
+     *
+     * IMPORTANT: This does NOT complete the task — it adds a comment and sets
+     * a process variable. The task stays open for the reviewer to act on after
+     * the submitter provides the requested information.
+     * Completing the task would hit the exclusive gateway which only has
+     * APPROVED/REJECTED conditions — REQUEST_INFO would cause a FlowableException.
      */
     @Transactional
     public void requestInfo(String taskId, TaskActionRequest req,
@@ -182,10 +186,20 @@ public class EcmTaskService {
                     "A comment is required when requesting additional information");
         }
         Task task = requireTask(taskId);
-        String processInstanceId = task.getProcessInstanceId();
-        complete(taskId, "REQUEST_INFO", req.comment(), userSubject, userGroups);
-        // Mark instance so submitter sees it needs attention
-        workflowInstanceService.markInfoRequested(processInstanceId);
+        assertUserCanActOnTask(task, userSubject, userGroups);
+
+        // Add comment as a task variable (visible in history)
+        flowableTaskService.addComment(taskId, task.getProcessInstanceId(),
+                "REQUEST_INFO: " + req.comment());
+
+        // Set variable so the UI can show the status
+        flowableTaskService.setVariable(taskId, "infoRequested", true);
+        flowableTaskService.setVariable(taskId, "infoRequestComment", req.comment());
+
+        // Mark instance record so submitter sees it needs attention
+        workflowInstanceService.markInfoRequested(task.getProcessInstanceId());
+
+        log.info("Info requested: taskId={}, by={}", taskId, userSubject);
     }
 
     /**
@@ -261,6 +275,9 @@ public class EcmTaskService {
     private void assertUserCanActOnTask(Task task, String userSubject, List<String> userGroups) {
         if (userSubject.equals(task.getAssignee())) return;
 
+        // ECM_ADMIN can act on any task regardless of candidate group
+        if (userGroups.contains("ECM_ADMIN")) return;
+
         // Check candidate groups
         List<String> taskCandidateGroups = flowableTaskService.getIdentityLinksForTask(task.getId())
                 .stream()
@@ -317,27 +334,37 @@ public class EcmTaskService {
     }
 
     /**
-     * Returns enriched queue items: all unassigned pool tasks + my claimed tasks.
-     * Party context is fetched from ecm_core.parties via JdbcTemplate (cross-schema read).
+     * Returns enriched queue items: unassigned pool tasks + my claimed tasks.
+     * For admin users, also includes tasks claimed by OTHER users.
      */
-    public List<TaskQueueItemDto> getQueueItems(String userSubject, List<String> candidateGroups) {
+    public List<TaskQueueItemDto> getQueueItems(String userSubject, List<String> candidateGroups, boolean isAdmin) {
+        Map<String, Task> merged = new LinkedHashMap<>();
+
         // Tasks claimed by me
         List<Task> mine = flowableTaskService.createTaskQuery()
                 .taskAssignee(userSubject)
                 .orderByTaskCreateTime().desc()
                 .list();
-
-        // Pool tasks available to my groups
-        List<Task> pool = candidateGroups.isEmpty() ? List.of()
-                : flowableTaskService.createTaskQuery()
-                .taskCandidateGroupIn(candidateGroups)
-                .taskUnassigned()
-                .orderByTaskCreateTime().desc()
-                .list();
-
-        Map<String, Task> merged = new LinkedHashMap<>();
         mine.forEach(t -> merged.put(t.getId(), t));
-        pool.forEach(t -> merged.putIfAbsent(t.getId(), t));
+
+        // Pool tasks available to my groups (unassigned)
+        if (!candidateGroups.isEmpty()) {
+            List<Task> pool = flowableTaskService.createTaskQuery()
+                    .taskCandidateGroupIn(candidateGroups)
+                    .taskUnassigned()
+                    .orderByTaskCreateTime().desc()
+                    .list();
+            pool.forEach(t -> merged.putIfAbsent(t.getId(), t));
+        }
+
+        // Admin: also include tasks claimed by OTHER users
+        if (isAdmin) {
+            List<Task> allAssigned = flowableTaskService.createTaskQuery()
+                    .taskAssigned()
+                    .orderByTaskCreateTime().desc()
+                    .list();
+            allAssigned.forEach(t -> merged.putIfAbsent(t.getId(), t));
+        }
 
         return merged.values().stream()
                 .map(this::enrichTask)
@@ -355,6 +382,19 @@ public class EcmTaskService {
                 .stream()
                 .map(this::enrichTask)
                 .toList();
+    }
+
+    /**
+     * Admin: release a task claimed by another user (force-unclaim).
+     */
+    @Transactional
+    public void adminRelease(String taskId) {
+        Task task = requireTask(taskId);
+        if (task.getAssignee() == null) {
+            throw new IllegalStateException("Task is not claimed");
+        }
+        flowableTaskService.unclaim(taskId);
+        log.info("Admin force-released task: taskId={}, was assigned to={}", taskId, task.getAssignee());
     }
 
     /**

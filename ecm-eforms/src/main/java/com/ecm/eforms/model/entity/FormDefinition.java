@@ -41,12 +41,6 @@ public class FormDefinition {
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "product_type_code")
-    private String productTypeCode;
-
-    @Column(name = "form_type_code")
-    private String formTypeCode;
-
     @Column(nullable = false)
     @Builder.Default
     private Integer version = 1;
@@ -117,6 +111,9 @@ public class FormDefinition {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @Column(name = "document_category_id")
+    private Integer documentCategoryId;
 
     // ── Lifecycle helpers ─────────────────────────────────────────────
 

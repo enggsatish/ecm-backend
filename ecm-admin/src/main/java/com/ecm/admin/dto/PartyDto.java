@@ -33,9 +33,10 @@ public record PartyDto(
         String          notes,
         Boolean         isActive,
         OffsetDateTime  createdAt,
-        OffsetDateTime  updatedAt
+        OffsetDateTime  updatedAt,
+        java.util.List<EnrollmentDto> enrollments
 ) {
-    /** Map from entity → DTO. */
+    /** Map from entity → DTO (without enrollments — populated separately). */
     public static PartyDto from(com.ecm.admin.entity.Party p) {
         return new PartyDto(
                 p.getId(),
@@ -49,7 +50,31 @@ public record PartyDto(
                 p.getNotes(),
                 p.getIsActive(),
                 p.getCreatedAt(),
-                p.getUpdatedAt()
+                p.getUpdatedAt(),
+                null
         );
     }
+
+    public PartyDto withEnrollments(java.util.List<EnrollmentDto> enrollments) {
+        return new PartyDto(id, customerRef, displayName, segment, segmentId,
+                shortName, registrationNo, parentPartyId, notes, isActive,
+                createdAt, updatedAt, enrollments);
+    }
+
+    public record EnrollmentDto(
+            Integer id,
+            Integer productLineId,
+            String  productLineName,
+            String  productLineCode,
+            Integer productId,
+            String  productName,
+            String  productCode,
+            Boolean isActive,
+            OffsetDateTime enrolledAt
+    ) {}
+
+    public record EnrollmentRequest(
+            Integer productLineId,
+            Integer productId
+    ) {}
 }

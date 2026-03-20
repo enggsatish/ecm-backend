@@ -121,7 +121,7 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
                             })
                             .switchIfEmpty(
                                     // STEP 4: Cache miss — call identity service
-                                    identityClient.enrich(sub, email)
+                                    identityClient.enrich(sub, email, groups)
                                             .flatMap(dto -> {
                                                 if ("NO_ACCESS".equals(dto.getStatus())) {
                                                     return forbidden(cleanExchange, "ECM_NO_ACCESS",
@@ -152,9 +152,9 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private Mono<Void> forwardEnriched(ServerWebExchange exchange,
-                                        GatewayFilterChain chain,
-                                        EnrichmentResponseDto dto,
-                                        String sub, String email) {
+                                       GatewayFilterChain chain,
+                                       EnrichmentResponseDto dto,
+                                       String sub, String email) {
         String roles = dto.getRoles() == null ? "" : String.join(",", dto.getRoles());
         String perms = dto.getPermissions() == null ? "" : String.join(",", dto.getPermissions());
 
@@ -191,7 +191,7 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
         exchange.getResponse().setStatusCode(HttpStatus.SERVICE_UNAVAILABLE);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
         String body = "{\"success\":false,\"code\":\"ECM_SERVICE_UNAVAILABLE\"," +
-                      "\"message\":\"Authentication service temporarily unavailable. Try again.\"}";
+                "\"message\":\"Authentication service temporarily unavailable. Try again.\"}";
         DataBuffer buffer = exchange.getResponse().bufferFactory()
                 .wrap(body.getBytes(StandardCharsets.UTF_8));
         return exchange.getResponse().writeWith(Mono.just(buffer));
@@ -203,14 +203,14 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
                 .status("OK")
                 .roles(List.of("ECM_ADMIN"))
                 .permissions(List.of(
-                    "documents:read",    "documents:write",   "documents:upload",
-                    "documents:delete",  "documents:archive", "documents:export",
-                    "workflow:view",     "workflow:claim",    "workflow:approve",
-                    "workflow:reject",   "workflow:design",   "workflow:admin",
-                    "eforms:submit",     "eforms:review",     "eforms:design",   "eforms:admin",
-                    "admin:users",       "admin:roles",       "admin:configure",  "admin:audit",
-                    "ocr:trigger",       "ocr:view",
-                    "archive:read",      "archive:manage"
+                        "documents:read",    "documents:write",   "documents:upload",
+                        "documents:delete",  "documents:archive", "documents:export",
+                        "workflow:view",     "workflow:claim",    "workflow:approve",
+                        "workflow:reject",   "workflow:design",   "workflow:admin",
+                        "eforms:submit",     "eforms:review",     "eforms:design",   "eforms:admin",
+                        "admin:users",       "admin:roles",       "admin:configure",  "admin:audit",
+                        "ocr:trigger",       "ocr:view",
+                        "archive:read",      "archive:manage"
                 ))
                 .build();
     }

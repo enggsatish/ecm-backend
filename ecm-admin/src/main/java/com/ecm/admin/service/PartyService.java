@@ -14,6 +14,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -173,5 +176,75 @@ public class PartyService {
                 """, id);
 
         log.info("Deactivated party id={}", id);
+    }
+
+    // ── Product Enrollments ────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<PartyDto.EnrollmentDto> getEnrollments(UUID partyId) {
+        return jdbc.query("""
+                SELECT e.id, e.product_line_id, e.product_id, e.is_active, e.enrolled_at,
+                       pl.name AS pl_name, pl.code AS pl_code,
+                       p.display_name AS p_name, p.product_code AS p_code
+                FROM ecm_core.party_product_enrollments e
+                LEFT JOIN ecm_admin.product_lines pl ON pl.id = e.product_line_id
+                LEFT JOIN ecm_admin.products p ON p.id = e.product_id
+                WHERE e.party_id = ? AND e.is_active = true
+                ORDER BY e.enrolled_at DESC
+                """,
+                (rs, rowNum) -> new PartyDto.EnrollmentDto(
+                        rs.getInt("id"),
+                        rs.getInt("product_line_id"),
+                        rs.getString("pl_name"),
+                        rs.getString("pl_code"),
+                        rs.getObject("product_id") != null ? rs.getInt("product_id") : null,
+                        rs.getString("p_name"),
+                        rs.getString("p_code"),
+                        rs.getBoolean("is_active"),
+                        rs.getObject("enrolled_at", OffsetDateTime.class)
+                ),
+                partyId
+        );
+    }
+
+    @Transactional
+    public PartyDto addEnrollment(UUID partyId, PartyDto.EnrollmentRequest req, String actorId) {
+        partyRepo.findByIdAndIsActiveTrue(partyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Party not found: " + partyId));
+
+        jdbc.update("""
+                INSERT INTO ecm_core.party_product_enrollments
+                    (party_id, product_line_id, product_id, enrolled_by, is_active)
+                VALUES (?, ?, ?, ?, true)
+                ON CONFLICT (party_id, product_line_id, product_id) DO NOTHING
+                """,
+                partyId,
+                req.productLineId(),
+                req.productId(),
+                actorId
+        );
+
+        log.info("Enrollment added: partyId={}, productLineId={}, productId={}",
+                partyId, req.productLineId(), req.productId());
+
+        PartyDto dto = getById(partyId);
+        return dto.withEnrollments(getEnrollments(partyId));
+    }
+
+    @Transactional
+    public void removeEnrollment(UUID partyId, Integer enrollmentId) {
+        jdbc.update("""
+                UPDATE ecm_core.party_product_enrollments
+                SET is_active = false
+                WHERE id = ? AND party_id = ?
+                """, enrollmentId, partyId);
+        log.info("Enrollment removed: enrollmentId={}, partyId={}", enrollmentId, partyId);
+    }
+
+    /** Get by ID with enrollments loaded. */
+    @Transactional(readOnly = true)
+    public PartyDto getByIdWithEnrollments(UUID id) {
+        PartyDto dto = getById(id);
+        return dto.withEnrollments(getEnrollments(id));
     }
 }

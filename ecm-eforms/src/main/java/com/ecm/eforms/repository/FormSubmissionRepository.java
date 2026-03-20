@@ -34,12 +34,6 @@ public interface FormSubmissionRepository extends JpaRepository<FormSubmission, 
         @Param("assignedTo") String assignedTo,
         Pageable pageable);
 
-    /** Review queue: unassigned submissions needing attention */
-    @Query("SELECT s FROM FormSubmission s WHERE s.tenantId = :tenantId " +
-           "AND s.status IN ('SUBMITTED','SIGNED','IN_REVIEW') " +
-           "ORDER BY s.submittedAt ASC")
-    List<FormSubmission> findReviewQueue(@Param("tenantId") String tenantId);
-
     /** Analytics helper */
     @Query("SELECT COUNT(s) FROM FormSubmission s " +
            "WHERE s.tenantId = :tenantId AND s.formKey = :formKey AND s.status = :status")

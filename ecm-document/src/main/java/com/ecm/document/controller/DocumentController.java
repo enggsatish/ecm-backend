@@ -123,14 +123,21 @@ public class DocumentController {
     public ResponseEntity<ApiResponse<PagedResponse<DocumentResponse>>> list(
             @RequestParam(defaultValue = "0")  int    page,
             @RequestParam(defaultValue = "20") int    size,
-            @RequestParam(required = false)    String search
+            @RequestParam(required = false)    String search,
+            @RequestParam(required = false)    String partyExternalId
     ) {
         int safeSize = Math.min(size, 100);
         Pageable pageable = PageRequest.of(page, safeSize,
                 Sort.by(Sort.Direction.DESC, "createdAt"));
-        PagedResponse<DocumentResponse> result = (search != null && !search.isBlank())
-                ? documentService.search(search, pageable)
-                : documentService.listAll(pageable);
+
+        PagedResponse<DocumentResponse> result;
+        if (partyExternalId != null && !partyExternalId.isBlank()) {
+            result = documentService.listByParty(partyExternalId.trim(), pageable);
+        } else if (search != null && !search.isBlank()) {
+            result = documentService.search(search, pageable);
+        } else {
+            result = documentService.listAll(pageable);
+        }
         return ResponseEntity.ok(ApiResponse.ok(result));
     }
 

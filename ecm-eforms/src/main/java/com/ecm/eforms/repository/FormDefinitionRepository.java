@@ -34,17 +34,13 @@ public interface FormDefinitionRepository extends JpaRepository<FormDefinition, 
     Integer findMaxVersionByTenantIdAndFormKey(
         @Param("tenantId") String tenantId, @Param("formKey") String formKey);
 
-    /** Paginated list with optional filters */
+    /** Paginated list with optional status filter */
     @Query("SELECT d FROM FormDefinition d WHERE d.tenantId = :tenantId " +
            "AND (:status IS NULL OR d.status = :status) " +
-           "AND (:productType IS NULL OR d.productTypeCode = :productType) " +
-           "AND (:formType IS NULL OR d.formTypeCode = :formType) " +
            "ORDER BY d.updatedAt DESC")
     Page<FormDefinition> findAllWithFilters(
-        @Param("tenantId")    String tenantId,
-        @Param("status")      String status,
-        @Param("productType") String productType,
-        @Param("formType")    String formType,
+        @Param("tenantId") String tenantId,
+        @Param("status")   String status,
         Pageable pageable);
 
     /** Archive the current PUBLISHED version — called atomically during publish */

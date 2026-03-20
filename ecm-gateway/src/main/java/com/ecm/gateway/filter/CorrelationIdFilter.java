@@ -45,19 +45,18 @@ import java.util.UUID;
 @Component
 public class CorrelationIdFilter implements GlobalFilter, Ordered {
 
-    public static final String CORRELATION_ID_HEADER = "X-Correlation-ID";
+    private static final String CORRELATION_ID_HEADER = "X-Request-ID";
+    private static final String CORRELATION_ATTR       = "ecm.correlationId";
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
 
         // ── 1. Resolve the correlation ID ─────────────────────────────────────
-        String existing = exchange.getRequest()
-                .getHeaders()
-                .getFirst(CORRELATION_ID_HEADER);
+        String existing = exchange.getAttribute(CORRELATION_ATTR);
 
         final String correlationId = (existing != null && !existing.isBlank())
                 ? existing
-                : UUID.randomUUID().toString();
+                : exchange.getRequest().getHeaders().getFirst(CORRELATION_ID_HEADER);
 
         // ── 2. Inject into the outbound REQUEST via a decorator ───────────────
         // Builds a brand-new HttpHeaders from scratch so we never touch the

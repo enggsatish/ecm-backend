@@ -32,8 +32,7 @@
         <module>ecm-eforms</module>
         <module>ecm-admin</module>
         <module>ecm-ocr</module>
-        <!-- Uncomment as we build each module -->
-        <!-- <module>ecm-notification</module> -->
+        <module>ecm-notification</module>
         <!-- <module>ecm-retention</module>    -->
     </modules>
 
@@ -57,6 +56,9 @@
         <opensearch.version>1.5.2</opensearch.version>
         <okhttp.version>4.12.0</okhttp.version>
         <tika.version>3.0.0</tika.version>
+        <!-- OTEL / Micrometer Tracing -->
+        <otel.version>1.42.1</otel.version>
+        <micrometer-tracing.version>1.3.5</micrometer-tracing.version>
     </properties>
 
     <!-- ─── Dependency version management ───────────────────── -->
@@ -112,6 +114,7 @@
                     </exclusion>
                 </exclusions>
             </dependency>
+
             <!-- Apache Tika — text extraction for ecm-ocr -->
             <dependency>
                 <groupId>org.apache.tika</groupId>
@@ -138,12 +141,14 @@
                 <version>${tess4j.version}</version>
             </dependency>
 
-            <!-- PDFBox -->
-<!--            <dependency>-->
-<!--                <groupId>org.apache.pdfbox</groupId>-->
-<!--                <artifactId>pdfbox</artifactId>-->
-<!--                <version>${pdfbox.version}</version>-->
-<!--            </dependency>-->
+            <!-- PDFBox 3.x — used by ecm-ocr to render scanned PDF pages to images,
+                 and by ecm-eforms for AcroForm PDF generation (Sprint F).
+                 Only declare in modules that explicitly need it. -->
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>pdfbox</artifactId>
+                <version>${pdfbox.version}</version>
+            </dependency>
 
             <!-- OpenSearch -->
             <dependency>
@@ -166,6 +171,24 @@
                 <groupId>com.ecm</groupId>
                 <artifactId>ecm-common</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+
+            <!-- Micrometer Tracing BOM — manages all micrometer-tracing-* versions -->
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-tracing-bom</artifactId>
+                <version>${micrometer-tracing.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- OpenTelemetry BOM — manages all io.opentelemetry:* versions -->
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-bom</artifactId>
+                <version>${otel.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
             </dependency>
 
         </dependencies>

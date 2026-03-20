@@ -58,29 +58,6 @@ public class WorkflowClient {
         }
     }
 
-    public void createCategoryMapping(Integer categoryId, Integer workflowDefinitionId) {
-        try {
-            restClient.post()
-                    .uri("/api/workflow/categories/mappings")
-                    .body(Map.of("categoryId", categoryId, "workflowDefinitionId", workflowDefinitionId))
-                    .retrieve().toBodilessEntity();
-            log.info("Created workflow category mapping: categoryId={}, definitionId={}", categoryId, workflowDefinitionId);
-        } catch (RestClientException e) {
-            log.error("Failed to create workflow category mapping: {}", e.getMessage());
-        }
-    }
-
-    public void deleteCategoryMapping(Integer mappingId) {
-        try {
-            restClient.delete()
-                    .uri("/api/workflow/categories/mappings/{id}", mappingId)
-                    .retrieve().toBodilessEntity();
-            log.info("Deleted workflow category mapping: mappingId={}", mappingId);
-        } catch (RestClientException e) {
-            log.error("Failed to delete workflow category mapping {}: {}", mappingId, e.getMessage());
-        }
-    }
-
     private Integer toInteger(Object o) {
         if (o instanceof Integer i) return i;
         if (o instanceof Number n) return n.intValue();

@@ -31,18 +31,16 @@ public class FormRenderController {
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listPublished(
-            @RequestParam(required = false) String productType) {
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listPublished() {
 
         List<Map<String, Object>> forms = definitionService
-            .list("PUBLISHED", productType, null, PageRequest.of(0, 100))
+            .list("PUBLISHED", PageRequest.of(0, 100))
             .getContent().stream()
             .map(d -> Map.<String, Object>of(
+                "id",              d.getId().toString(),
                 "formKey",         d.getFormKey(),
                 "name",            d.getName(),
                 "description",     d.getDescription() != null ? d.getDescription() : "",
-                "productTypeCode", d.getProductTypeCode() != null ? d.getProductTypeCode() : "",
-                "formTypeCode",    d.getFormTypeCode()    != null ? d.getFormTypeCode()    : "",
                 "version",         d.getVersion(),
                 "estimatedMinutes",
                     d.getSchema() != null && d.getSchema().getEstimatedMinutes() != null

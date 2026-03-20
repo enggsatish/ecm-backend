@@ -118,11 +118,28 @@ public class WorkflowTaskController {
         String       subject = jwtAuth.getToken().getSubject();
         List<String> groups  = extractCandidateGroupsRaw(jwtAuth);
 
+        // ECM_ADMIN sees ALL tasks regardless of candidate group
+        boolean isAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ECM_ADMIN"));
+        if (isAdmin) {
+            groups = java.util.List.of("ECM_ADMIN", "ECM_BACKOFFICE", "ECM_REVIEWER", "ECM_DESIGNER");
+        }
+
         List<TaskQueueItemDto> items = assignedToMe
                 ? taskService.getMyQueueItems(subject)
-                : taskService.getQueueItems(subject, groups);
+                : taskService.getQueueItems(subject, groups, isAdmin);
 
         return ResponseEntity.ok(ApiResponse.ok(items));
+    }
+
+    @PostMapping("/{taskId}/admin-release")
+    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @AuditLog(event = "TASK_ADMIN_RELEASED", resourceType = "WORKFLOW_TASK")
+    public ResponseEntity<ApiResponse<Void>> adminRelease(
+            @PathVariable String taskId,
+            Authentication auth) {
+        taskService.adminRelease(taskId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Task released by admin"));
     }
 
     @GetMapping("/{taskId}")
@@ -345,12 +362,15 @@ public class WorkflowTaskController {
                 .toList();
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * Extract candidate groups from Spring authorities (gateway-enriched).
+     * This is the authoritative source — the gateway reads roles from the DB
+     * and sets X-ECM-Roles header, which EcmJwtConverter converts to ROLE_ECM_* authorities.
+     *
+     * Previously this method preferred the raw JWT "groups" claim, which could be
+     * stale or missing roles assigned via the admin UI.
+     */
     private List<String> extractCandidateGroupsRaw(JwtAuthenticationToken auth) {
-        Object groups = auth.getToken().getClaim("groups");
-        if (groups instanceof List<?> list) {
-            return list.stream().map(Object::toString).toList();
-        }
         return extractCandidateGroups(auth);
     }
 

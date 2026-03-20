@@ -4,12 +4,15 @@ import com.ecm.common.client.DocumentPromotionClient;
 import com.ecm.eforms.model.entity.FormDefinition;
 import com.ecm.eforms.model.entity.FormSubmission;
 import com.ecm.eforms.repository.FormDefinitionRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -48,6 +51,8 @@ public class FormDocumentCreationService {
     private final PdfGenerationService    pdfService;
     private final DocumentPromotionClient documentPromotionClient;
     private final FormDefinitionRepository definitionRepository;
+    private final JdbcTemplate            jdbc;
+    private final ObjectMapper            objectMapper;
 
     /**
      * Generate a PDF for the approved submission and push it to ecm-document.
@@ -57,12 +62,13 @@ public class FormDocumentCreationService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public UUID createFromApprovedSubmission(FormSubmission submission) {
-        log.info("SK: Creating form document from approved form submission: {}", submission);
         try {
             // 1. Build a human-friendly display name for the document
-            String formName  = resolveFormName(submission);
-            String shortId   = submission.getId().toString().substring(0, 8);
-            String displayName = formName + " — " + shortId;
+            //    Format: {formName} — {customerName or customerRef} — {date}
+            String formName    = resolveFormName(submission);
+            String customerCtx = resolveCustomerContext(submission);
+            String dateStr     = java.time.LocalDate.now().toString();
+            String displayName = formName + " — " + customerCtx + " — " + dateStr;
             String filename    = submission.getFormKey() + "-" + submission.getId() + ".pdf";
 
             // 2. Re-generate PDF from submission data
@@ -85,12 +91,20 @@ public class FormDocumentCreationService {
                     displayName,
                     submission.getSubmittedBy(),         // uploaded_by_email on the document
                     submission.getPartyExternalId(),     // soft ref → party
-                    null                                 // categoryId — null until form→category mapping added
+                    submission.getFormDefinition() != null
+                            ? submission.getFormDefinition().getDocumentCategoryId()
+                            : null
             );
 
             if (documentId != null) {
                 log.info("Document promoted for FormSubmission {}: documentId={}",
                         submission.getId(), documentId);
+
+                // Copy form submission data directly into the document's extracted_fields.
+                writeSubmissionDataToDocument(documentId, submission);
+
+                // Auto-link to case checklist if case context was provided
+                linkToCaseChecklist(documentId, submission);
             } else {
                 log.error("DocumentPromotionClient returned null for FormSubmission {} — " +
                         "document NOT created. Check ecm-document logs.", submission.getId());
@@ -105,6 +119,99 @@ public class FormDocumentCreationService {
                     submission.getId(), ex.getMessage(), ex);
             return null;
         }
+    }
+
+    /**
+     * Auto-links the created document to a case checklist item if the submission
+     * contains _caseId and _checklistItemId in its submission_data.
+     * These are injected by FormFillPage when filling a form from a case context.
+     */
+    private void linkToCaseChecklist(UUID documentId, FormSubmission submission) {
+        try {
+            Map<String, Object> data = submission.getSubmissionData();
+            if (data == null) return;
+
+            Object caseIdObj = data.get("_caseId");
+            Object itemIdObj = data.get("_checklistItemId");
+
+            if (caseIdObj == null || itemIdObj == null) return;
+
+            String caseId = caseIdObj.toString();
+            int itemId = Integer.parseInt(itemIdObj.toString());
+
+            int rows = jdbc.update("""
+                UPDATE ecm_core.case_documents
+                SET document_id = ?, status = 'UPLOADED', uploaded_at = NOW(), updated_at = NOW()
+                WHERE id = ? AND case_id = ?::uuid
+                """, documentId, itemId, caseId);
+
+            if (rows > 0) {
+                log.info("Auto-linked document {} to case {} checklist item {}", documentId, caseId, itemId);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to auto-link document to case checklist: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Writes the form submission data directly into the document's extracted_fields column.
+     *
+     * For form-generated documents, this is more accurate than OCR extraction because
+     * the structured data is already available — no need to regex-parse a PDF we created.
+     *
+     * The OCR pipeline will still run (extracting raw text from the PDF), but the
+     * extracted_fields are already populated from this method. If OCR also extracts fields
+     * (via a category template), they will overwrite these — which is fine since OCR
+     * fields from a system-generated PDF should match the submission data.
+     */
+    private void writeSubmissionDataToDocument(UUID documentId, FormSubmission submission) {
+        try {
+            Map<String, Object> submissionData = submission.getSubmissionData();
+            if (submissionData == null || submissionData.isEmpty()) {
+                log.debug("No submission data to write for documentId={}", documentId);
+                return;
+            }
+
+            String fieldsJson = objectMapper.writeValueAsString(submissionData);
+
+            jdbc.update("""
+                UPDATE ecm_core.documents
+                SET extracted_fields = ?::jsonb,
+                    updated_at = NOW()
+                WHERE id = ?
+                """, fieldsJson, documentId);
+
+            log.info("Wrote {} submission fields to document {}", submissionData.size(), documentId);
+        } catch (Exception e) {
+            // Best-effort — don't fail the promotion if field copy fails
+            log.warn("Failed to write submission data to document {}: {}", documentId, e.getMessage());
+        }
+    }
+
+    /**
+     * Resolve customer context for the document display name.
+     * Tries: party display name from DB → party external ID → submitter name → short ID fallback.
+     */
+    private String resolveCustomerContext(FormSubmission submission) {
+        // Try to get customer display name from parties table
+        String partyExtId = submission.getPartyExternalId();
+        if (partyExtId != null && !partyExtId.isBlank()) {
+            try {
+                String displayName = jdbc.queryForObject(
+                        "SELECT display_name FROM ecm_core.parties WHERE external_id = ?",
+                        String.class, partyExtId);
+                if (displayName != null) return displayName;
+            } catch (Exception e) {
+                log.debug("Could not resolve party name for {}: {}", partyExtId, e.getMessage());
+            }
+            return partyExtId; // fallback to external ID
+        }
+
+        // Fallback to submitter name or short submission ID
+        if (submission.getSubmittedByName() != null && !submission.getSubmittedByName().isBlank()) {
+            return submission.getSubmittedByName();
+        }
+        return submission.getId().toString().substring(0, 8);
     }
 
     /**

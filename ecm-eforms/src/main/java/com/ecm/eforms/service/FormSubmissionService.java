@@ -248,63 +248,9 @@ public class FormSubmissionService {
         return submissionRepo.findAllWithFilters(TENANT, status, formKey, assignedTo, pageable);
     }
 
-    @Transactional(readOnly = true)
-    public List<FormSubmission> getReviewQueue() {
-        return submissionRepo.findReviewQueue(TENANT);
-    }
-
-    // ── Review ─────────────────────────────────────────────────────────────────
-
-    public FormSubmission review(UUID id, ReviewSubmissionRequest req, String reviewerId) {
-        FormSubmission sub = getById(id);
-        String newStatus = req.getStatus().toUpperCase();
-        validateTransition(sub.getStatus(), newStatus);
-
-        sub.setStatus(newStatus);
-        sub.setReviewNotes(req.getReviewNotes());
-        sub.setReviewedBy(reviewerId);
-        sub.setReviewedAt(OffsetDateTime.now());
-
-        if (req.getAssignedTo() != null && !req.getAssignedTo().isBlank()) {
-            sub.setAssignedTo(req.getAssignedTo());
-            sub.setAssignedAt(OffsetDateTime.now());
-        }
-
-        FormSubmission updated = submissionRepo.save(sub);
-        eventPublisher.publishReviewed(updated);
-        log.info("Reviewed: id={}, newStatus={}, by={}", id, newStatus, reviewerId);
-
-        // ── Document promotion on direct approval ────────────────────────────
-        // When backoffice approves via the Review Queue UI, the workflow task
-        // path (WorkflowCompletedListener → createFromApprovedSubmission) is
-        // never triggered. This means the approved form never lands in the
-        // document list unless we also promote here.
-        //
-        // Both paths must create a document on APPROVED so the behaviour is
-        // consistent regardless of whether the form had a workflow attached:
-        //
-        //   Workflow path:  EcmTaskService.approve() → processCompletedListener
-        //                   → workflow.completed event → WorkflowCompletedListener
-        //                   → createFromApprovedSubmission()
-        //
-        //   Direct review:  FormSubmissionService.review() [THIS METHOD]
-        //                   → createFromApprovedSubmission()
-        //
-        // Best-effort: failure here does NOT roll back the APPROVED status.
-        // The form stays approved; only the document promotion is missing.
-        // Operators can re-trigger via admin or re-upload manually if needed.
-        if ("APPROVED".equals(newStatus)) {
-            try {
-                documentCreationService.createFromApprovedSubmission(updated);
-            } catch (Exception ex) {
-                log.error("Document promotion failed for approved submissionId={}: {}",
-                        id, ex.getMessage(), ex);
-                // Do not rethrow — APPROVED status is already committed
-            }
-        }
-
-        return updated;
-    }
+    // Review operations are now handled exclusively through the Flowable workflow engine.
+    // See: /backoffice/queue → EcmTaskService.approve() → processCompletedListener
+    //      → workflow.completed → WorkflowCompletedListener → createFromApprovedSubmission()
 
     // ── Withdraw ───────────────────────────────────────────────────────────────
 
@@ -322,17 +268,6 @@ public class FormSubmissionService {
 
         sub.setStatus("WITHDRAWN");
         return submissionRepo.save(sub);
-    }
-
-    // ── Status transition guard ────────────────────────────────────────────────
-
-    private void validateTransition(String current, String next) {
-        boolean ok = switch (current) {
-            case "SUBMITTED", "SIGNED" -> List.of("IN_REVIEW", "APPROVED", "REJECTED").contains(next);
-            case "IN_REVIEW"           -> List.of("IN_REVIEW", "APPROVED", "REJECTED").contains(next);
-            default -> false;
-        };
-        if (!ok) throw new IllegalStateException("Invalid transition: " + current + " → " + next);
     }
 
     // ── Validation exception ───────────────────────────────────────────────────

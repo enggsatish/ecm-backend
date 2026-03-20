@@ -117,7 +117,7 @@ public class BpmnGeneratorService {
                                   Set<String> declared) {
         String groupExpr = step.getCandidateGroupVariable() != null
                 ? "${" + step.getCandidateGroupVariable() + "}"
-                : "ECM_REVIEWER";
+                : "${candidateGroup}";
 
         xml.append(String.format("""
                   <userTask id="%s" name="%s"
@@ -229,8 +229,8 @@ public class BpmnGeneratorService {
                                       List<String> flows, Set<String> declared) {
         xml.append(String.format("""
                   <serviceTask id="%s" name="%s"
-                      flowable:class="com.ecm.workflow.flowable.NotificationDelegate"/>
-                """, step.getId(), escape(step.getName())));
+                      flowable:delegateExpression="${notificationDelegate}"/>
+""", step.getId(), escape(step.getName())));
         declared.add(step.getId());
 
         if (!step.getOutcomes().isEmpty()) {

@@ -61,7 +61,7 @@ public class Document {
     @Column(name = "blob_storage_path", nullable = false, length = 1000)
     private String blobStoragePath;
 
-    /** FK → ecm_core.document_categories.id */
+    /** Soft ref → ecm_admin.document_categories.id (no hard FK — cross-schema; integrity owned by application) */
     @Column(name = "category_id")
     private Integer categoryId;
 

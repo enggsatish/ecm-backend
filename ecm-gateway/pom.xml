@@ -74,6 +74,50 @@
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+  ═══════════════════════════════════════════════════════════════════════════════
+  ecm-gateway/pom.xml — Sprint I OTEL additions
+
+  Gateway cannot depend on ecm-common (WebFlux + JPA conflict).
+  It needs the same tracing bridge + OTLP exporter PLUS the Reactor
+  context-propagation library (critical for WebFlux trace continuity).
+  ═══════════════════════════════════════════════════════════════════════════════
+-->
+
+        <!-- ── Micrometer Tracing Bridge ────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+
+        <!-- ── OTLP Exporter ────────────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+
+        <!-- ── Reactor Context Propagation ─────────────────────────────────────────── -->
+        <!--
+          CRITICAL for WebFlux/Reactor-based services (ecm-gateway only).
+
+          Without this, OTEL trace context is lost when Reactor switches threads
+          (e.g., subscribeOn, flatMap, etc.). This library teaches Reactor to
+          carry the OTEL context (and MDC) across thread boundaries automatically.
+
+          Spring Boot 3.2+ auto-configures this when it's on the classpath.
+          You just need to declare the dependency — no code changes required.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>context-propagation</artifactId>
+            <!-- version managed by Spring Boot BOM (typically 1.1.x) -->
+        </dependency>
+
+        <!-- ── Micrometer Prometheus Registry ──────────────────────────────────────── -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
 
     </dependencies>
 

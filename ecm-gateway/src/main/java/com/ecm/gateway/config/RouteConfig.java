@@ -48,6 +48,9 @@ public class RouteConfig {
     @Value("${ecm.services.ocr-url:http://localhost:8087}")
     private String ocrUrl;
 
+    @Value("${ecm.services.notification-url:http://localhost:8088}")
+    private String notificationUrl;
+
     // Injected from RateLimiterConfig -- Spring-managed beans with
     // ReactiveStringRedisTemplate properly wired in.
     private final RedisRateLimiter defaultRateLimiter;
@@ -105,7 +108,7 @@ public class RouteConfig {
                                         .setName("document-cb")
                                         .setFallbackUri("forward:/fallback/document"))
                                 // Tag responses so logs can identify the upload route
-                                .setResponseHeader("X-Route", "document-upload")
+                                //.setResponseHeader("X-Route", "document-upload")
                         )
                         .uri(documentUrl)
                 )
@@ -149,6 +152,15 @@ public class RouteConfig {
                              .setFallbackUri("forward:/fallback/eforms")))
                      .uri(formflowUrl)
                  )
+                // Notifications route (handled by ecm-notification)
+                .route("notifications-service", r -> r
+                        .path("/api/notifications/**")
+                        .filters(f -> f
+                                .circuitBreaker(cb -> cb
+                                        .setName("notification-cb")
+                                        .setFallbackUri("forward:/fallback/admin")))
+                        .uri(notificationUrl)
+                )
                 // Admin service fall back route.
                 .route("admin-service", r -> r
                         .path("/api/admin/**")

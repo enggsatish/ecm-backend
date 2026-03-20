@@ -2,6 +2,7 @@ package com.ecm.gateway;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import reactor.core.publisher.Hooks;
 
 /**
  * ECM API Gateway — port 8080.
@@ -25,6 +26,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @SpringBootApplication
 public class GatewayApplication {
     public static void main(String[] args) {
+
+        // REQUIRED for WebFlux: propagates MDC (traceId, spanId) across Reactor
+        // thread switches. The context-propagation library on the classpath provides
+        // the bridge, but Reactor only activates it after this explicit call.
+        Hooks.enableAutomaticContextPropagation();
         SpringApplication.run(GatewayApplication.class, args);
     }
 }

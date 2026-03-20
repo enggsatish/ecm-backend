@@ -214,11 +214,13 @@ public class UserAdminService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Role not found: " + roleName));
 
-        // Insert pending user — entra_object_id deliberately NULL until first login
+        // Insert invited user — entra_object_id is NULL until first SSO login.
+        // On first login, EnrichmentService matches by email and binds the real
+        // SSO subject (Okta user ID or Entra Object ID) to this record.
         jdbc.update(
                 "INSERT INTO ecm_core.users " +
-                        "(email, entra_object_id, display_name, department_id, is_active,  created_at, updated_at) " +
-                        "VALUES (?, 'PENDING', ?, ?, false, NOW(), NOW())",
+                        "(email, display_name, department_id, is_active, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, true, NOW(), NOW())",
                 email,
                 req.getDisplayName() != null ? req.getDisplayName().trim() : null,
                 req.getDepartmentId()

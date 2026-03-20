@@ -1,11 +1,13 @@
 package com.ecm.ocr.pipeline;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -18,28 +20,78 @@ import java.util.regex.*;
 public class FieldExtractorService {
 
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbcTemplate;
 
     // Keyed by categoryCode (upper-case) → template
     private final Map<String, ExtractionTemplate> templates = new HashMap<>();
 
     /**
-     * Loads all extraction templates from classpath:ocr/extraction-templates/*.json.
+     * Loads extraction templates on startup.
      *
-     * Per-file error handling: a malformed or truncated JSON file is logged and skipped
-     * — it does NOT crash the application context. A startup failure here would block
-     * ALL OCR processing for every document type, which is far worse than one bad template.
-     *
-     * If a template fails to load, OCR still runs; the affected category returns no
-     * structured fields (raw extracted text is still stored). Fix the JSON and restart.
-     *
-     * Common cause: file truncated by a zip extraction issue, saved mid-edit,
-     * or hand-edited with a missing closing bracket/quote.
+     * Primary source: ecm_admin.ocr_templates table (DB-stored, admin-managed).
+     * Fallback: classpath JSON files (for dev/bootstrap when DB is empty).
      */
     @PostConstruct
     public void loadTemplates() {
-        PathMatchingResourcePatternResolver resolver =
-                new PathMatchingResourcePatternResolver();
+        int dbLoaded = loadFromDatabase();
+        if (dbLoaded > 0) {
+            log.info("Loaded {} OCR extraction template(s) from database", dbLoaded);
+            return;
+        }
 
+        log.info("No templates in database — falling back to classpath JSON files");
+        loadFromClasspath();
+    }
+
+    /**
+     * Reloads templates from the database. Call this after admin creates/updates templates.
+     */
+    public void refreshTemplates() {
+        templates.clear();
+        int loaded = loadFromDatabase();
+        log.info("OCR templates refreshed: {} loaded from database", loaded);
+        if (loaded == 0) {
+            loadFromClasspath();
+        }
+    }
+
+    private int loadFromDatabase() {
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT category_code, name, description, fields " +
+                    "FROM ecm_admin.ocr_templates WHERE is_active = true");
+
+            int loaded = 0;
+            for (Map<String, Object> row : rows) {
+                try {
+                    String categoryCode = (String) row.get("category_code");
+                    String fieldsJson = row.get("fields") != null ? row.get("fields").toString() : "[]";
+
+                    List<ExtractionTemplate.FieldPattern> fields = objectMapper.readValue(
+                            fieldsJson, new TypeReference<>() {});
+
+                    ExtractionTemplate template = new ExtractionTemplate(
+                            categoryCode,
+                            (String) row.get("description"),
+                            fields);
+
+                    templates.put(categoryCode.toUpperCase(), template);
+                    loaded++;
+                } catch (Exception e) {
+                    log.error("Failed to parse OCR template for category '{}': {}",
+                            row.get("category_code"), e.getMessage());
+                }
+            }
+            return loaded;
+        } catch (Exception e) {
+            log.warn("Could not load OCR templates from database (table may not exist yet): {}",
+                    e.getMessage());
+            return 0;
+        }
+    }
+
+    private void loadFromClasspath() {
+        PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
         Resource[] resources;
         try {
             resources = resolver.getResources("classpath:ocr/extraction-templates/*.json");
@@ -56,25 +108,16 @@ public class FieldExtractorService {
                 ExtractionTemplate t = objectMapper.readValue(r.getInputStream(),
                         ExtractionTemplate.class);
                 templates.put(t.categoryCode().toUpperCase(), t);
-                log.info("Loaded extraction template: {} ({} fields)",
+                log.info("Loaded extraction template from classpath: {} ({} fields)",
                         t.categoryCode(), t.fields().size());
                 loaded++;
             } catch (Exception e) {
-                // Log the exact filename and parse error so it is easy to find and fix.
-                // JsonEOFException means the file is truncated (incomplete JSON).
-                log.error("Skipping malformed template '{}': {} " +
-                                "— fix the file and restart to reload.",
+                log.error("Skipping malformed template '{}': {}",
                         r.getFilename(), e.getMessage());
                 failed++;
             }
         }
-        log.info("Extraction templates: {} loaded, {} failed to parse", loaded, failed);
-        if (failed > 0) {
-            log.warn("{} template(s) could not be loaded. " +
-                            "Those document categories will produce no structured fields. " +
-                            "Check files under src/main/resources/ocr/extraction-templates/",
-                    failed);
-        }
+        log.info("Classpath extraction templates: {} loaded, {} failed to parse", loaded, failed);
     }
 
     /**
@@ -82,16 +125,24 @@ public class FieldExtractorService {
      * Returns an empty map if no template exists for the category.
      */
     public Map<String, Object> extract(String categoryCode, String extractedText) {
-        if (categoryCode == null || extractedText == null || extractedText.isBlank())
+        if (categoryCode == null) {
+            log.info("Field extraction skipped — categoryCode is null");
             return Collections.emptyMap();
+        }
+        if (extractedText == null || extractedText.isBlank()) {
+            log.info("Field extraction skipped — extractedText is blank for categoryCode={}",
+                    categoryCode);
+            return Collections.emptyMap();
+        }
 
         ExtractionTemplate template = templates.get(categoryCode.toUpperCase());
         if (template == null) {
-            log.debug("No extraction template for categoryCode={}", categoryCode);
+            log.info("No extraction template for categoryCode={}", categoryCode);
             return Collections.emptyMap();
         }
 
         Map<String, Object> fields = new LinkedHashMap<>();
+        int matched = 0;
         for (ExtractionTemplate.FieldPattern fp : template.fields()) {
             try {
                 Pattern p = Pattern.compile(fp.pattern(),
@@ -99,6 +150,7 @@ public class FieldExtractorService {
                 Matcher m = p.matcher(extractedText);
                 if (m.find() && m.groupCount() >= 1) {
                     fields.put(fp.fieldName(), m.group(1).strip());
+                    matched++;
                 } else if (fp.defaultValue() != null) {
                     fields.put(fp.fieldName(), fp.defaultValue());
                 }
@@ -106,7 +158,8 @@ public class FieldExtractorService {
                 log.warn("Invalid pattern for field {}: {}", fp.fieldName(), e.getMessage());
             }
         }
-        log.debug("Extracted {} fields for category={}", fields.size(), categoryCode);
+        log.info("Field extraction complete: category={}, template_fields={}, regex_matched={}, text_chars={}",
+                categoryCode, template.fields().size(), matched, extractedText.length());
         return fields;
     }
 

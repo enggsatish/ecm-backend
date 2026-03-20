@@ -6,8 +6,6 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Configuration for a deployable workflow type.
@@ -69,10 +67,6 @@ public class WorkflowDefinitionConfig {
     /** Expected completion time in hours (informational, for SLA dashboard) */
     @Column(name = "sla_hours")
     private Integer slaHours;
-
-    @OneToMany(mappedBy = "workflowDefinition", cascade = CascadeType.ALL, orphanRemoval = true)
-    @Builder.Default
-    private List<CategoryWorkflowMapping> categoryMappings = new ArrayList<>();
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

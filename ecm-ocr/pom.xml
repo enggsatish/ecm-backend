@@ -12,7 +12,8 @@
 
     <artifactId>ecm-ocr</artifactId>
     <name>ecm-ocr</name>
-    <description>ECM OCR Service — Tika extraction, OpenSearch indexing. Port 8087.</description>
+    <description>ECM OCR Service — Tika extraction, PDFBox page rendering,
+        Tesseract HTTP OCR, OpenSearch indexing. Port 8087.</description>
 
     <dependencies>
 
@@ -67,11 +68,29 @@
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-core</artifactId>
-            <!-- NO version — added to root pom in Fix 1 -->
+            <!-- NO version — managed by root pom -->
         </dependency>
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parsers-standard-package</artifactId>
+        </dependency>
+
+        <!-- ── PDFBox 3.x — scanned PDF page rendering ────────────
+             Used by TikaOcrEngine to render each page of a scanned PDF
+             to a BufferedImage (PNG bytes), which are then sent to the
+             Tesseract HTTP container for OCR.
+
+             Also used by ecm-eforms PdfGenerationService (Sprint F).
+             Version managed by root pom (pdfbox.version = 3.0.2).
+
+             PDFBox 3.x API change: use Loader.loadPDF() instead of
+             PDDocument.load() — the old multi-arg load() overloads
+             with MemoryUsageSetting were removed.
+        -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <!-- NO version — root pom manages this -->
         </dependency>
 
         <!-- ── OpenSearch — ${opensearch.version} from root pom ──── -->

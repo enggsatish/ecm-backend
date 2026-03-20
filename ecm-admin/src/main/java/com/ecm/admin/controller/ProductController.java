@@ -62,21 +62,23 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.ok(null, "Product deactivated"));
     }
 
-    @PostMapping("/{id}/categories")
+    // ── Document Types ──────────────────────────────────────────────────────
+
+    @PostMapping("/{id}/document-types")
     @PreAuthorize("hasRole('ECM_ADMIN')")
-    public ResponseEntity<ApiResponse<ProductDto>> linkCategory(
+    public ResponseEntity<ApiResponse<ProductDto>> addDocumentType(
             @PathVariable Integer id,
-            @RequestBody ProductDto.CategoryLinkRequest req) {
+            @RequestBody ProductDto.DocumentTypeRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(service.linkCategory(id, req), "Category linked"));
+                .body(ApiResponse.ok(service.addDocumentType(id, req), "Document type added"));
     }
 
-    @DeleteMapping("/{id}/categories/{categoryId}")
+    @DeleteMapping("/{id}/document-types/{docTypeId}")
     @PreAuthorize("hasRole('ECM_ADMIN')")
-    public ResponseEntity<ApiResponse<Void>> unlinkCategory(
-            @PathVariable Integer id, @PathVariable Integer categoryId) {
-        service.unlinkCategory(id, categoryId);
-        return ResponseEntity.ok(ApiResponse.ok(null, "Category unlinked"));
+    public ResponseEntity<ApiResponse<Void>> removeDocumentType(
+            @PathVariable Integer id, @PathVariable Integer docTypeId) {
+        service.removeDocumentType(id, docTypeId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Document type removed"));
     }
 
     /** Proxy to ecm-workflow — returns available workflow definitions for admin dropdowns */

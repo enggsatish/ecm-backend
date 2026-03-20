@@ -53,7 +53,6 @@ public class EFormsRabbitConfig {
 
     // ── Queue names ───────────────────────────────────────────────────────
 
-    public static final String Q_SUBMITTED            = "ecm.form.submitted";
     public static final String Q_SIGNED               = "ecm.form.signed";
     public static final String Q_DECLINED             = "ecm.form.declined";
     public static final String Q_REVIEWED             = "ecm.form.reviewed";
@@ -78,7 +77,6 @@ public class EFormsRabbitConfig {
 
     // ── Outbound queues (DLX → Q_DLQ on failure) ─────────────────────────
 
-    @Bean public Queue qSubmitted() { return withDlx(Q_SUBMITTED); }
     @Bean public Queue qSigned()    { return withDlx(Q_SIGNED); }
     @Bean public Queue qDeclined()  { return withDlx(Q_DECLINED); }
     @Bean public Queue qReviewed()  { return withDlx(Q_REVIEWED); }
@@ -92,7 +90,6 @@ public class EFormsRabbitConfig {
 
     // ── Outbound bindings ─────────────────────────────────────────────────
 
-    @Bean public Binding bindSubmitted() { return bind(qSubmitted(), RK_SUBMITTED); }
     @Bean public Binding bindSigned()    { return bind(qSigned(),    RK_SIGNED);    }
     @Bean public Binding bindDeclined()  { return bind(qDeclined(),  RK_DECLINED);  }
     @Bean public Binding bindReviewed()  { return bind(qReviewed(),  RK_REVIEWED);  }
@@ -146,6 +143,10 @@ public class EFormsRabbitConfig {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(cf);
         factory.setMessageConverter(messageConverter());
+        // OTEL: creates a Micrometer Observation for every message delivery
+        factory.setObservationEnabled(true);
+        //factory.setMicrometerEnabled(true);
+        //factory.setObservationRegistry(observationRegistry);
         return factory;
     }
 }

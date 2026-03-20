@@ -24,7 +24,7 @@ import java.util.UUID;
  * Form Definition CRUD.
  *
  * POST   /api/eforms/definitions              create DRAFT
- * GET    /api/eforms/definitions              list (filter by status/productType/formType)
+ * GET    /api/eforms/definitions              list (filter by status)
  * GET    /api/eforms/definitions/{id}         full definition
  * GET    /api/eforms/definitions/{id}/versions version history
  * PUT    /api/eforms/definitions/{id}         update (DRAFT only)
@@ -53,12 +53,10 @@ public class FormDefinitionController {
     @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER','ECM_BACKOFFICE','ECM_REVIEWER')")
     public ResponseEntity<ApiResponse<Page<FormDefinitionSummary>>> list(
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) String productType,
-            @RequestParam(required = false) String formType,
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        Page<FormDefinition> defs = definitionService.list(status, productType, formType,
+        Page<FormDefinition> defs = definitionService.list(status,
                 PageRequest.of(page, size, Sort.by("updatedAt").descending()));
         return ResponseEntity.ok(ApiResponse.ok(defs.map(formMapper::toSummary)));
     }

@@ -15,18 +15,15 @@ import java.time.OffsetDateTime;
 public class ProductService {
 
     private final ProductRepository productRepo;
-    private final ProductCategoryLinkRepository linkRepo;
+    private final ProductDocumentTypeRepository docTypeRepo;
     private final DocumentCategoryRepository categoryRepo;
-    private final WorkflowClient workflowClient;
 
     public ProductService(ProductRepository productRepo,
-                          ProductCategoryLinkRepository linkRepo,
-                          DocumentCategoryRepository categoryRepo,
-                          WorkflowClient workflowClient) {
+                          ProductDocumentTypeRepository docTypeRepo,
+                          DocumentCategoryRepository categoryRepo) {
         this.productRepo = productRepo;
-        this.linkRepo = linkRepo;
+        this.docTypeRepo = docTypeRepo;
         this.categoryRepo = categoryRepo;
-        this.workflowClient = workflowClient;
     }
 
     @Transactional(readOnly = true)
@@ -47,6 +44,9 @@ public class ProductService {
         p.setDisplayName(req.getDisplayName().trim());
         p.setDescription(req.getDescription());
         p.setProductSchema(req.getProductSchema());
+        p.setCaseWorkflowKey(req.getCaseWorkflowKey());
+        p.setSegmentId(req.getSegmentId());
+        p.setProductLineId(req.getProductLineId());
         return ProductDto.summary(productRepo.save(p));
     }
 
@@ -55,6 +55,9 @@ public class ProductService {
         p.setDisplayName(req.getDisplayName().trim());
         p.setDescription(req.getDescription());
         p.setProductSchema(req.getProductSchema());
+        p.setCaseWorkflowKey(req.getCaseWorkflowKey());
+        if (req.getSegmentId() != null) p.setSegmentId(req.getSegmentId());
+        if (req.getProductLineId() != null) p.setProductLineId(req.getProductLineId());
         p.setUpdatedAt(OffsetDateTime.now());
         return ProductDto.full(productRepo.save(p));
     }
@@ -66,33 +69,46 @@ public class ProductService {
         productRepo.save(p);
     }
 
-    public ProductDto linkCategory(Integer productId, ProductDto.CategoryLinkRequest req) {
+    // ── Document Types (replaces linkCategory / unlinkCategory) ─────────────
+
+    public ProductDto addDocumentType(Integer productId, ProductDto.DocumentTypeRequest req) {
         Product product = findOrThrow(productId);
+
         if (req.getCategoryId() == null)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "categoryId is required");
+        if (req.getName() == null || req.getName().isBlank())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required");
+        if (req.getCode() == null || req.getCode().isBlank())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "code is required");
+
         DocumentCategory category = categoryRepo.findById(req.getCategoryId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Category not found: " + req.getCategoryId()));
-        if (linkRepo.existsByProductIdAndCategoryId(productId, req.getCategoryId()))
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Category already linked");
-        ProductCategoryLink link = new ProductCategoryLink();
-        link.setProduct(product);
-        link.setCategory(category);
-        link.setWorkflowDefinitionId(req.getWorkflowDefinitionId());
-        linkRepo.save(link);
-        if (req.getWorkflowDefinitionId() != null)
-            workflowClient.createCategoryMapping(req.getCategoryId(), req.getWorkflowDefinitionId());
+
+        if (docTypeRepo.existsByProductIdAndCode(productId, req.getCode().toUpperCase()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Document type code already exists for this product: " + req.getCode());
+
+        ProductDocumentType dt = new ProductDocumentType();
+        dt.setProduct(product);
+        dt.setCategory(category);
+        dt.setName(req.getName().trim());
+        dt.setCode(req.getCode().toUpperCase().trim());
+        dt.setSourceType(req.getSourceType() != null ? req.getSourceType() : "UPLOAD");
+        dt.setFormDefinitionId(req.getFormDefinitionId());
+        dt.setOnUploadAction(req.getOnUploadAction() != null ? req.getOnUploadAction() : "OCR_ONLY");
+        dt.setIsRequired(req.getIsRequired() != null ? req.getIsRequired() : true);
+        dt.setSortOrder(req.getSortOrder() != null ? req.getSortOrder() : 0);
+        docTypeRepo.save(dt);
+
         return ProductDto.full(findOrThrow(productId));
     }
 
-    public void unlinkCategory(Integer productId, Integer categoryId) {
-        ProductCategoryLink link = linkRepo.findByProductIdAndCategoryId(productId, categoryId)
+    public void removeDocumentType(Integer productId, Integer docTypeId) {
+        ProductDocumentType dt = docTypeRepo.findByProductIdAndId(productId, docTypeId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Category link not found"));
-        Integer wfId = link.getWorkflowDefinitionId();
-        Integer linkId = link.getId();
-        linkRepo.delete(link);
-        if (wfId != null) workflowClient.deleteCategoryMapping(linkId);
+                        "Document type not found"));
+        docTypeRepo.delete(dt);
     }
 
     private Product findOrThrow(Integer id) {

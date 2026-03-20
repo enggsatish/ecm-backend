@@ -31,13 +31,12 @@ public class EFormsDtos {
         @NotBlank private String      formKey;
         @NotBlank private String      name;
         private String                description;
-        private String                productTypeCode;
-        private String                formTypeCode;
         @NotNull  private FormSchema  schema;
         private Map<String, Object>   uiConfig;
         private WorkflowConfig        workflowConfig;
         private DocuSignFormConfig    docuSignConfig;
         private UUID                  documentTemplateId;
+        private Integer               documentCategoryId;
         private List<String>          tags;
     }
 
@@ -45,13 +44,12 @@ public class EFormsDtos {
     public static class UpdateFormDefinitionRequest {
         private String                name;
         private String                description;
-        private String                productTypeCode;
-        private String                formTypeCode;
         private FormSchema            schema;
         private Map<String, Object>   uiConfig;
         private WorkflowConfig        workflowConfig;
         private DocuSignFormConfig    docuSignConfig;
         private UUID                  documentTemplateId;
+        private Integer               documentCategoryId;
         private List<String>          tags;
     }
 
@@ -66,8 +64,6 @@ public class EFormsDtos {
         private String                formKey;
         private String                name;
         private String                description;
-        private String                productTypeCode;
-        private String                formTypeCode;
         private Integer               version;
         private String                status;
         private FormSchema            schema;
@@ -75,6 +71,7 @@ public class EFormsDtos {
         private WorkflowConfig        workflowConfig;
         private DocuSignFormConfig    docuSignConfig;
         private UUID                  documentTemplateId;
+        private Integer               documentCategoryId;
         private List<String>          tags;
         private String                createdBy;
         private String                updatedBy;
@@ -89,8 +86,6 @@ public class EFormsDtos {
         private String         formKey;
         private String         name;
         private String         description;
-        private String         productTypeCode;
-        private String         formTypeCode;
         private Integer        version;
         private String         status;
         private List<String>   tags;

@@ -4,9 +4,7 @@ import com.ecm.workflow.model.dsl.WorkflowTemplateDsl;
 import com.ecm.workflow.model.entity.WorkflowDefinitionConfig;
 import com.ecm.workflow.model.entity.WorkflowTemplate;
 import com.ecm.workflow.model.entity.WorkflowTemplate.BpmnSource;
-import com.ecm.workflow.model.entity.WorkflowTemplateMapping;
 import com.ecm.workflow.repository.WorkflowDefinitionConfigRepository;
-import com.ecm.workflow.repository.WorkflowTemplateMappingRepository;
 import com.ecm.workflow.repository.WorkflowTemplateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -23,7 +23,6 @@ import java.util.Optional;
 public class WorkflowTemplateService {
 
     private final WorkflowTemplateRepository templateRepo;
-    private final WorkflowTemplateMappingRepository mappingRepo;
     private final BpmnGeneratorService bpmnGenerator;
     private final FlowableDeploymentService deploymentService;
     private final ObjectMapper objectMapper;
@@ -172,6 +171,74 @@ public class WorkflowTemplateService {
             log.info("Publishing template '{}' using generated BPMN from DSL", template.getName());
         }
 
+        // ── Post-process BPMN XML ────────────────────────────────────────────
+        // These transformations ensure visual BPMN templates work correctly
+        // with the ECM workflow engine, regardless of what the designer authored.
+
+        // 1. Replace hardcoded candidate groups with ${candidateGroup} process variable
+        //    ONLY when all userTasks use the SAME group (simple single-review workflows).
+        //    Multi-role workflows (triage) intentionally use different groups per task.
+        java.util.Set<String> distinctGroups = new java.util.HashSet<>();
+        Matcher cgMatcher = Pattern.compile("flowable:candidateGroups=\"(ECM_[A-Z_]+)\"").matcher(bpmnXml);
+        while (cgMatcher.find()) distinctGroups.add(cgMatcher.group(1));
+
+        if (distinctGroups.size() == 1) {
+            // All tasks use the same group — safe to replace with runtime variable
+            bpmnXml = bpmnXml.replaceAll(
+                    "flowable:candidateGroups=\"ECM_[A-Z_]+\"",
+                    Matcher.quoteReplacement("flowable:candidateGroups=\"${candidateGroup}\""));
+        } else if (distinctGroups.size() > 1) {
+            // Multiple different groups — keep them as-is (multi-role workflow)
+            log.info("Multi-role BPMN detected ({} distinct groups) — keeping hardcoded candidateGroups",
+                    distinctGroups.size());
+        }
+
+        // 2. Inject task listeners on userTasks that don't have them
+        //    - taskCreatedListener: publishes workflow.task.assigned → triggers notifications
+        //    - taskCompletedListener: logs task completion for audit
+        if (!bpmnXml.contains("taskCompletedListener")) {
+            String taskListenerBlock =
+                    "      <extensionElements>\n" +
+                    "          <flowable:taskListener event=\"create\" " +
+                    "delegateExpression=\"${taskCreatedListener}\"/>\n" +
+                    "          <flowable:taskListener event=\"complete\" " +
+                    "delegateExpression=\"${taskCompletedListener}\"/>\n" +
+                    "        </extensionElements>\n" +
+                    "      </userTask>";
+            // Replace self-closing userTasks: <userTask ... />
+            bpmnXml = bpmnXml.replace(
+                    "flowable:formFieldValidation=\"false\" />",
+                    "flowable:formFieldValidation=\"false\">\n" + taskListenerBlock);
+            if (!bpmnXml.contains("taskCompletedListener")) {
+                log.warn("Could not inject task listeners — userTask format not recognized");
+            }
+        }
+
+        // 3. Inject ProcessEndListener on endEvents that don't have it
+        if (!bpmnXml.contains("ProcessEndListener")) {
+            // Match <endEvent id="..." name="..." /> (self-closing)
+            Pattern endEventPattern = Pattern.compile(
+                    "<endEvent\\s+id=\"([^\"]+)\"\\s+name=\"([^\"]*)\"\\s*/>");
+            Matcher m = endEventPattern.matcher(bpmnXml);
+            StringBuilder sb = new StringBuilder();
+            while (m.find()) {
+                String groupId = m.group(1);
+                String name = m.group(2);
+                String replacement =
+                        "<endEvent id=\"" + groupId + "\" name=\"" + name + "\">\n" +
+                        "        <extensionElements>\n" +
+                        "          <flowable:executionListener event=\"end\"\n" +
+                        "              class=\"com.ecm.workflow.flowable.ProcessEndListener\">\n" +
+                        "            <flowable:field name=\"completionStatus\" stringValue=\"" + name + "\"/>\n" +
+                        "          </flowable:executionListener>\n" +
+                        "        </extensionElements>\n" +
+                        "      </endEvent>";
+                m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            }
+            m.appendTail(sb);
+            bpmnXml = sb.toString();
+        }
+
         FlowableDeploymentService.DeploymentResult result =
                 deploymentService.deploy(bpmnXml, template.getName());
 
@@ -228,30 +295,6 @@ public class WorkflowTemplateService {
         return templateRepo.save(template);
     }
 
-    // ─── Mappings ─────────────────────────────────────────────────────────────
-
-    @Transactional
-    public WorkflowTemplateMapping addMapping(Integer templateId, Integer productId,
-                                              Integer categoryId, Integer priority) {
-        WorkflowTemplate template = getById(templateId);
-        WorkflowTemplateMapping mapping = WorkflowTemplateMapping.builder()
-                .template(template)
-                .productId(productId)
-                .categoryId(categoryId)
-                .priority(priority != null ? priority : 100)
-                .build();
-        return mappingRepo.save(mapping);
-    }
-
-    @Transactional
-    public void removeMapping(Integer mappingId) {
-        mappingRepo.deleteById(mappingId);
-    }
-
-    public List<WorkflowTemplateMapping> getMappings(Integer templateId) {
-        return mappingRepo.findByTemplateId(templateId);
-    }
-
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private WorkflowTemplate getDraftOrThrow(Integer id) {
@@ -270,7 +313,7 @@ public class WorkflowTemplateService {
     private Optional<String> extractProcessName(String bpmnXml) {
         try {
             // Lightweight regex; we avoid full DOM parse for performance
-            java.util.regex.Matcher m = java.util.regex.Pattern
+            Matcher m = Pattern
                     .compile("<process[^>]+name=\"([^\"]+)\"")
                     .matcher(bpmnXml);
             if (m.find()) {

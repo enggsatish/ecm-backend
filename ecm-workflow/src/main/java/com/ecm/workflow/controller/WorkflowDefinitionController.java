@@ -28,10 +28,6 @@ import java.util.List;
  * POST   /groups/{id}/members              add user to group (ADMIN)
  * DELETE /groups/{id}/members/{userId}     remove user (ADMIN)
  *
- * GET    /categories/mappings              list category→workflow mappings (ADMIN)
- * POST   /categories/mappings              create mapping (ADMIN)
- * DELETE /categories/mappings/{id}         remove mapping (ADMIN)
- *
  * All write operations delegate to WorkflowAdminService — no repository calls here.
  */
 @Slf4j
@@ -110,29 +106,4 @@ public class WorkflowDefinitionController {
         return ResponseEntity.ok(ApiResponse.ok(null, "Member removed"));
     }
 
-    // ── Category → Workflow Mappings ──────────────────────────────────────────
-
-    @GetMapping("/categories/mappings")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
-    public ResponseEntity<ApiResponse<List<CategoryMappingDto>>> listCategoryMappings() {
-        return ResponseEntity.ok(ApiResponse.ok(adminService.listCategoryMappings()));
-    }
-
-    @PostMapping("/categories/mappings")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
-    @AuditLog(event = "CATEGORY_MAPPING_CREATED", resourceType = "WORKFLOW_CONFIG")
-    public ResponseEntity<ApiResponse<CategoryMappingDto>> createCategoryMapping(
-            @Valid @RequestBody CreateCategoryMappingRequest req) {
-
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(adminService.createCategoryMapping(req), "Mapping created"));
-    }
-
-    @DeleteMapping("/categories/mappings/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
-    @AuditLog(event = "CATEGORY_MAPPING_DELETED", resourceType = "WORKFLOW_CONFIG")
-    public ResponseEntity<ApiResponse<Void>> deleteCategoryMapping(@PathVariable Integer id) {
-        adminService.deleteCategoryMapping(id);
-        return ResponseEntity.ok(ApiResponse.ok(null, "Mapping removed"));
-    }
 }

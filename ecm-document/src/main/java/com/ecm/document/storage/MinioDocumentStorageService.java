@@ -27,6 +27,11 @@ import java.util.UUID;
  *
  * Existing documents remain at their original paths — the new convention
  * applies only to new uploads after the V5 migration.
+ *
+ * ── SPRINT I FIX: MinioConfig now supplies a custom OkHttpClient ──────────────
+ * The default OkHttp connection pool reuses stale sockets after MinIO restarts,
+ * causing "Broken pipe / Connection reset" on uploads. The fix is in MinioConfig —
+ * this class is unchanged in its logic. See MinioConfig.java for details.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,6 +39,11 @@ import java.util.UUID;
 public class MinioDocumentStorageService implements DocumentStorageService {
 
     private final MinioClient minioClient;
+
+    // MinIO SDK minimum part size for multipart upload is 5 MiB.
+    // -1 tells the SDK to auto-calculate: single PUT if file < 5MB,
+    // multipart if >= 5MB. This is the correct value — do NOT use 0.
+    private static final long AUTO_PART_SIZE = -1L;
 
     // ─── store() — hierarchy-aware ────────────────────────────────────────────
 
@@ -50,30 +60,33 @@ public class MinioDocumentStorageService implements DocumentStorageService {
                         DocumentUploadRequest metadata) {
         String key      = buildStoragePath(metadata, documentId, file.getOriginalFilename());
         String blobPath = bucket + "/" + key;
+
+        log.debug("MinIO upload starting: bucket={}, key={}, sizeBytes={}, contentType={}",
+                bucket, key, file.getSize(), file.getContentType());
+
         try {
             minioClient.putObject(
                     PutObjectArgs.builder()
                             .bucket(bucket)
                             .object(key)
-                            .stream(file.getInputStream(), file.getSize(), -1)
-                            .contentType(file.getContentType())
+                            // objectSize = actual file size (enables single PUT for < 5MB)
+                            // AUTO_PART_SIZE = -1 → SDK chooses multipart threshold automatically
+                            .stream(file.getInputStream(), file.getSize(), AUTO_PART_SIZE)
+                            .contentType(resolveContentType(file))
                             .build()
             );
-            log.info("Stored: bucket={}, key={}", bucket, key);
+            log.info("Stored: bucket={}, key={}, sizeBytes={}", bucket, key, file.getSize());
             return blobPath;
+
         } catch (Exception ex) {
+            // Log the root cause explicitly — OkHttp wraps socket errors in generic Exception
+            Throwable root = ex.getCause() != null ? ex.getCause() : ex;
+            log.error("MinIO store FAILED: bucket={}, key={}, sizeBytes={} — {}: {}",
+                    bucket, key, file.getSize(),
+                    root.getClass().getSimpleName(), root.getMessage());
             throw new StorageException("Failed to store file in MinIO: " + blobPath, ex);
         }
     }
-
-    /**
-     * Backwards-compatible overload — no hierarchy context.
-     * Used by legacy callers and unit tests that don't yet pass metadata.
-     */
-//    @Override
-//    public String store(String bucket, UUID documentId, MultipartFile file) {
-//        return store(bucket, documentId, file, null);
-//    }
 
     // ─── retrieve / delete — unchanged ────────────────────────────────────────
 
@@ -142,5 +155,11 @@ public class MinioDocumentStorageService implements DocumentStorageService {
     private String sanitise(String name) {
         if (name == null) return "document";
         return name.replaceAll("[^a-zA-Z0-9._\\-]", "_").toLowerCase();
+    }
+
+    /** Ensures content type is never null — MinIO rejects null content-type. */
+    private String resolveContentType(MultipartFile file) {
+        String ct = file.getContentType();
+        return (ct != null && !ct.isBlank()) ? ct : "application/octet-stream";
     }
 }

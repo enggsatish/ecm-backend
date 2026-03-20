@@ -32,8 +32,6 @@ public class FormDefinitionService {
             .formKey(req.getFormKey())
             .name(req.getName())
             .description(req.getDescription())
-            .productTypeCode(req.getProductTypeCode())
-            .formTypeCode(req.getFormTypeCode())
             .version(nextVersion)
             .status("DRAFT")
             .schema(req.getSchema())
@@ -41,6 +39,7 @@ public class FormDefinitionService {
             .workflowConfig(req.getWorkflowConfig())
             .docuSignConfig(req.getDocuSignConfig())
             .documentTemplateId(req.getDocumentTemplateId())
+            .documentCategoryId(req.getDocumentCategoryId())
             .tags(req.getTags())
             .createdBy(userId)
             .updatedBy(userId)
@@ -78,8 +77,8 @@ public class FormDefinitionService {
     }
 
     @Transactional(readOnly = true)
-    public Page<FormDefinition> list(String status, String productType, String formType, Pageable pageable) {
-        return repo.findAllWithFilters(TENANT, status, productType, formType, pageable);
+    public Page<FormDefinition> list(String status, Pageable pageable) {
+        return repo.findAllWithFilters(TENANT, status, pageable);
     }
 
     // ── Update (DRAFT only) ───────────────────────────────────────────
@@ -91,13 +90,12 @@ public class FormDefinitionService {
 
         if (req.getName()               != null) def.setName(req.getName());
         if (req.getDescription()        != null) def.setDescription(req.getDescription());
-        if (req.getProductTypeCode()    != null) def.setProductTypeCode(req.getProductTypeCode());
-        if (req.getFormTypeCode()       != null) def.setFormTypeCode(req.getFormTypeCode());
         if (req.getSchema()             != null) def.setSchema(req.getSchema());
         if (req.getUiConfig()           != null) def.setUiConfig(req.getUiConfig());
         if (req.getWorkflowConfig()     != null) def.setWorkflowConfig(req.getWorkflowConfig());
         if (req.getDocuSignConfig()     != null) def.setDocuSignConfig(req.getDocuSignConfig());
         if (req.getDocumentTemplateId() != null) def.setDocumentTemplateId(req.getDocumentTemplateId());
+        if (req.getDocumentCategoryId() != null) def.setDocumentCategoryId(req.getDocumentCategoryId());
         if (req.getTags()               != null) def.setTags(req.getTags());
         def.setUpdatedBy(userId);
 

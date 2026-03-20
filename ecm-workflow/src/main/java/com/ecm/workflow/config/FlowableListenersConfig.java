@@ -38,12 +38,32 @@ public class FlowableListenersConfig {
     @Bean
     public TaskListener taskCreatedListener() {
         return (DelegateTask task) -> {
-            log.info("Task created: id={}, name={}, candidateGroups={}",
-                    task.getId(), task.getName(), task.getVariable("candidateGroup"));
+            // Resolve candidate group — identity links are task-specific (correct for multi-role),
+            // process variable is workflow-wide (only correct for single-role workflows).
+            // Always prefer identity links.
+            String candidateGroup = null;
 
-            String documentId    = (String) task.getVariable("documentId");
-            String documentName  = (String) task.getVariable("documentName");
-            String candidateGroup = (String) task.getVariable("candidateGroup");
+            // 1. Read from Flowable identity links (task-specific, set from BPMN candidateGroups)
+            try {
+                candidateGroup = task.getCandidates().stream()
+                        .filter(c -> c.getGroupId() != null)
+                        .map(c -> c.getGroupId())
+                        .findFirst().orElse(null);
+            } catch (Exception e) {
+                log.debug("Could not read candidates from task: {}", e.getMessage());
+            }
+
+            // 2. Fallback to process variable (for ${candidateGroup} single-role workflows)
+            if (candidateGroup == null || candidateGroup.isBlank()) {
+                candidateGroup = (String) task.getVariable("candidateGroup");
+            }
+
+            log.info("Task created: id={}, name={}, candidateGroup={}",
+                    task.getId(), task.getName(), candidateGroup);
+
+            String documentId   = (String) task.getVariable("documentId");
+            String documentName = (String) task.getVariable("documentName");
+            String finalGroup   = candidateGroup;
 
             // Publish notification event — best effort, never block workflow
             try {
@@ -52,13 +72,14 @@ public class FlowableListenersConfig {
                         "taskName",      task.getName(),
                         "documentId",    documentId != null ? documentId : "",
                         "documentName",  documentName != null ? documentName : "",
-                        "assignedGroup", candidateGroup != null ? candidateGroup : "",
+                        "assignedGroup", finalGroup != null ? finalGroup : "",
                         "processInstanceId", task.getProcessInstanceId()
                 );
                 rabbitTemplate.convertAndSend(
                         WorkflowRabbitConfig.WORKFLOW_EXCHANGE,
                         WorkflowRabbitConfig.TASK_ASSIGNED_ROUTING_KEY,
                         event);
+                log.info("Published task.assigned: taskId={}, group={}", task.getId(), finalGroup);
             } catch (Exception ex) {
                 log.warn("Failed to publish task.assigned event for taskId={}: {}",
                         task.getId(), ex.getMessage());

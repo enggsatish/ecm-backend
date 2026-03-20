@@ -72,6 +72,48 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
+        <!-- ── Micrometer Tracing Bridge → OpenTelemetry SDK ───────────────────────── -->
+        <!-- Bridges Spring Boot's Observation API to the OTEL SDK.                    -->
+        <!-- Spring Boot auto-configures this when on classpath.                       -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+            <!-- version managed by micrometer-tracing-bom in root pom -->
+        </dependency>
+        <!-- ── OTLP Exporter ────────────────────────────────────────────────────────── -->
+        <!-- Sends traces to any OTLP-compatible backend:                               -->
+        <!--   Dev:  Jaeger at http://localhost:4318/v1/traces                          -->
+        <!--   Prod: Azure Monitor OpenTelemetry Exporter (or Jaeger in cloud)          -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <!-- version managed by opentelemetry-bom in root pom -->
+        </dependency>
+
+        <!-- ── Micrometer Prometheus Registry ──────────────────────────────────────── -->
+        <!-- Exposes /actuator/prometheus for Prometheus scraping.                      -->
+        <!-- Pairs with the Prometheus container in docker-compose-jaeger.yml           -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <!-- version managed by Spring Boot BOM -->
+        </dependency>
+        <!--
+          ═══════════════════════════════════════════════════════════════════════════════
+          WHY NOT opentelemetry-exporter-logging?
+
+          The logging exporter writes raw OTEL spans to the console — useful for
+          low-level debugging but noisy and hard to read in IntelliJ.
+          The OTLP exporter + Jaeger UI gives you the same data with visual flame graphs,
+          span search, and timeline — far more productive in development.
+
+          If you ever want to temporarily dump spans to console (offline debugging):
+            Add:  io.opentelemetry:opentelemetry-exporter-logging
+            Set:  management.otlp.tracing.endpoint=  (empty string — disables OTLP)
+                  otel.traces.exporter=logging        (in JVM args)
+          ═══════════════════════════════════════════════════════════════════════════════
+        -->
+
     </dependencies>
 
     <!--

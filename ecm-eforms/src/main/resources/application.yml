@@ -107,10 +107,27 @@ ecm:
     expiry-days:      30
 
 management:
+  # Micrometer tracing — sampling probability
+  tracing:
+    sampling:
+      probability: 1.0     # 100% in dev; set to 0.1 (10%) in azure profile
+
+  # OTLP exporter endpoint — where to send traces
+  # Spring Boot 3.2+ auto-configures OtlpHttpSpanExporter when this is set
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces   # Jaeger OTLP/HTTP receiver
+    # Prometheus metrics endpoint
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name} # label all metrics with service name
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,prometheus,metrics
   endpoint:
     health:
       show-details: when-authorized

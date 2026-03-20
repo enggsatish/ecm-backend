@@ -28,9 +28,7 @@ import java.util.UUID;
  * POST   /api/eforms/submissions              submit or save draft
  * GET    /api/eforms/submissions/mine         own submissions (any auth user)
  * GET    /api/eforms/submissions              all submissions (backoffice)
- * GET    /api/eforms/submissions/queue        review queue (backoffice)
  * GET    /api/eforms/submissions/{id}         detail (owner or backoffice)
- * PATCH  /api/eforms/submissions/{id}/status  review action (backoffice)
  * POST   /api/eforms/submissions/{id}/withdraw
  */
 @RestController
@@ -91,13 +89,6 @@ public class FormSubmissionController {
         return ResponseEntity.ok(ApiResponse.ok(subs.map(formMapper::toSubmissionSummary)));
     }
 
-    @GetMapping("/queue")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_BACKOFFICE','ECM_REVIEWER')")
-    public ResponseEntity<ApiResponse<List<FormSubmissionSummary>>> getQueue() {
-        return ResponseEntity.ok(ApiResponse.ok(
-                formMapper.toSubmissionSummaryList(submissionService.getReviewQueue())));
-    }
-
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ApiResponse<FormSubmissionDto>> getById(
@@ -115,17 +106,6 @@ public class FormSubmissionController {
                     .body(ApiResponse.error("Access denied", "ACCESS_DENIED"));
 
         return ResponseEntity.ok(ApiResponse.ok(formMapper.toSubmissionDto(sub)));
-    }
-
-    @PatchMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_BACKOFFICE','ECM_REVIEWER')")
-    public ResponseEntity<ApiResponse<FormSubmissionDto>> review(
-            @PathVariable UUID id,
-            @RequestBody ReviewSubmissionRequest req,
-            @AuthenticationPrincipal Jwt jwt) {
-
-        FormSubmission updated = submissionService.review(id, req, jwt.getSubject());
-        return ResponseEntity.ok(ApiResponse.ok(formMapper.toSubmissionDto(updated)));
     }
 
     @PostMapping("/{id}/withdraw")

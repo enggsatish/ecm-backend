@@ -54,14 +54,9 @@ public class DocumentUploadedListener {
                     documentId, partyExternalId, categoryId);
 
             // ── 1. Resolve template ──────────────────────────────────────────
-            Optional<WorkflowTemplate> templateOpt;
-            if (partyExternalId == null || partyExternalId.isBlank()) {
-                log.info("No partyExternalId for documentId={} — routing to unlinked triage",
-                        documentId);
-                templateOpt = templateResolver.resolveUnlinked();
-            } else {
-                templateOpt = templateResolver.resolve(null, categoryId);
-            }
+            // After v4.0 refactor, workflow routing for case-driven documents is handled
+            // by the case workflow. For ad-hoc uploads, we use the system default template.
+            Optional<WorkflowTemplate> templateOpt = templateResolver.resolveDefault();
 
             if (templateOpt.isEmpty()) {
                 // No template configured yet — normal on a fresh install.

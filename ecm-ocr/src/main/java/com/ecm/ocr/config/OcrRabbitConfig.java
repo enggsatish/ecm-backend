@@ -1,5 +1,6 @@
 package com.ecm.ocr.config;
 
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -159,6 +160,11 @@ public class OcrRabbitConfig {
         factory.setMessageConverter(ocrMessageConverter);
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setPrefetchCount(1);
+        // OTEL: creates a Micrometer Observation for every message delivery,
+        // which populates MDC with traceId + spanId for the listener thread.
+        factory.setObservationEnabled(true);
+        //factory.setMicrometerEnabled(true);
+        //factory.setObservationRegistry(observationRegistry);
         return factory;
     }
 }

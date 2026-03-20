@@ -1,6 +1,8 @@
 package com.ecm.workflow.config;
 
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.amqp.core.*;
+import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
@@ -45,6 +47,9 @@ public class WorkflowRabbitConfig {
 
     /** Owned by this service */
     public static final String WORKFLOW_EXCHANGE        = "ecm.workflow";
+
+    /** Notifications exchange — fire-and-forget for future ecm-notification service */
+    public static final String NOTIFICATIONS_EXCHANGE   = "ecm.notifications";
 
     // ── Routing keys inbound ───────────────────────────────────────────────
     public static final String DOCUMENT_UPLOADED_RK = "document.workflow.trigger";
@@ -95,6 +100,13 @@ public class WorkflowRabbitConfig {
         return ExchangeBuilder.topicExchange(WORKFLOW_EXCHANGE).durable(true).build();
     }
 
+    // ── Notifications exchange (outbound, fire-and-forget) ───────────────
+
+    @Bean
+    public TopicExchange notificationsExchange() {
+        return ExchangeBuilder.topicExchange(NOTIFICATIONS_EXCHANGE).durable(true).build();
+    }
+
     // ── ecm.documents consumer (document uploaded → workflow trigger) ──────
     // IMPORTANT: ecm.workflow.triggers already exists in RabbitMQ with
     // x-dead-letter-exchange=ecm.dlx (the original declaration).
@@ -108,11 +120,18 @@ public class WorkflowRabbitConfig {
                 .build();
     }
 
+    /**
+     * Declare ecm.documents exchange (idempotent — owned by ecm-document,
+     * but we need it declared here so bindings work regardless of startup order).
+     */
     @Bean
-    public Binding workflowTriggerBinding(Queue workflowTriggerQueue) {
-        TopicExchange docExchangeRef =
-                ExchangeBuilder.topicExchange(DOCUMENT_EXCHANGE).durable(true).build();
-        return BindingBuilder.bind(workflowTriggerQueue).to(docExchangeRef)
+    public TopicExchange documentExchangeRef() {
+        return ExchangeBuilder.topicExchange(DOCUMENT_EXCHANGE).durable(true).build();
+    }
+
+    @Bean
+    public Binding workflowTriggerBinding(Queue workflowTriggerQueue, TopicExchange documentExchangeRef) {
+        return BindingBuilder.bind(workflowTriggerQueue).to(documentExchangeRef)
                 .with(DOCUMENT_UPLOADED_RK);
     }
 
@@ -124,21 +143,11 @@ public class WorkflowRabbitConfig {
                 .build();
     }
 
-//    @Bean
-//    public Binding documentUploadedBinding(Queue documentUploadedQueue,
-//                                           TopicExchange workflowExchange) {
-//        return BindingBuilder.bind(documentUploadedQueue).to(workflowExchange)
-//                .with("document.uploaded");
-//    }
-
     @Bean
-    public Binding documentUploadedBinding(Queue documentUploadedQueue) {
-        // Passive reference — ecm-document owns ecm.documents, re-declare is a no-op.
-        TopicExchange documentExchangeRef =
-                ExchangeBuilder.topicExchange(DOCUMENT_EXCHANGE).durable(true).build();
+    public Binding documentUploadedBinding(Queue documentUploadedQueue, TopicExchange documentExchangeRef) {
         return BindingBuilder.bind(documentUploadedQueue)
                 .to(documentExchangeRef)
-                .with("document.workflow.trigger");   // matches Fix 2A WORKFLOW_TRIGGER_ROUTING_KEY
+                .with("document.workflow.trigger");
     }
 
     // ── ecm.eforms consumer (form submitted → start workflow) ─────────────
@@ -154,12 +163,20 @@ public class WorkflowRabbitConfig {
                 .build();
     }
 
+    /**
+     * Declare the ecm.eforms exchange here too (idempotent — RabbitMQ treats
+     * re-declarations as no-ops). This ensures the exchange exists BEFORE
+     * the binding is created, regardless of startup order between ecm-workflow
+     * and ecm-eforms. Without this bean, the binding silently fails when
+     * ecm-workflow starts before ecm-eforms.
+     */
     @Bean
-    public Binding formSubmittedBinding(Queue formSubmittedQueue) {
-        // Passive reference to ecm.eforms exchange (owned by ecm-eforms).
-        // Both modules declare it identically — RabbitMQ treats re-declares as no-ops.
-        TopicExchange eformsExchangeRef =
-                ExchangeBuilder.topicExchange(EFORMS_EXCHANGE).durable(true).build();
+    public TopicExchange eformsExchangeRef() {
+        return ExchangeBuilder.topicExchange(EFORMS_EXCHANGE).durable(true).build();
+    }
+
+    @Bean
+    public Binding formSubmittedBinding(Queue formSubmittedQueue, TopicExchange eformsExchangeRef) {
         return BindingBuilder.bind(formSubmittedQueue).to(eformsExchangeRef)
                 .with(FORM_SUBMITTED_RK);
     }
@@ -177,5 +194,29 @@ public class WorkflowRabbitConfig {
         RabbitTemplate template = new RabbitTemplate(cf);
         template.setMessageConverter(jsonMessageConverter);
         return template;
+    }
+
+    /**
+     * Explicit container factory — enables Micrometer Observation so that
+     * every @RabbitListener invocation gets an active span, which populates
+     * MDC with traceId and spanId for all log lines in the listener thread.
+     *
+     * Without this, Spring Boot's default factory has observationEnabled=false
+     * and all listener log lines show empty [,] for traceId/spanId.
+     */
+    @Bean
+    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter jsonMessageConverter,
+            ObservationRegistry observationRegistry) {
+
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(jsonMessageConverter);
+        // OTEL: creates a Micrometer Observation for every message delivery
+        factory.setObservationEnabled(true);
+        //factory.setMicrometerEnabled(true);
+        //factory.setObservationRegistry(observationRegistry);
+        return factory;
     }
 }

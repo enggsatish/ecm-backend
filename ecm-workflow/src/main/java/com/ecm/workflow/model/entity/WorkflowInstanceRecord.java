@@ -91,7 +91,11 @@ public class WorkflowInstanceRecord {
     @Column(name = "template_id")
     private Integer templateId;
 
-    /** Okta subject of the form submitter (only for form-triggered workflows) */
-    @Column(name = "submission_id", length = 100)       // ← ADD: link back to the FormSubmission
+    /** Link back to FormSubmission (only for form-triggered workflows) */
+    @Column(name = "submission_id", length = 100)
     private String submissionId;
+
+    /** Link to case (only for case-triggered workflows) */
+    @Column(name = "case_id")
+    private UUID caseId;
 }

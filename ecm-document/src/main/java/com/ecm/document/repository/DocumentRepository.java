@@ -22,12 +22,17 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     /** Documents uploaded by a specific user (integer FK). */
     Page<Document> findByUploadedByAndStatusNotOrderByCreatedAtDesc(
             Integer uploadedBy, DocumentStatus status, Pageable pageable);
-    // Full-text search on name or original_filename (case-insensitive)
+    /** Documents belonging to a specific party (customer). */
+    Page<Document> findByPartyExternalIdAndStatusNotOrderByCreatedAtDesc(
+            String partyExternalId, DocumentStatus status, Pageable pageable);
+
+    // Search by document name, filename, customer ref, or customer name
     @Query("""
     SELECT d FROM Document d
     WHERE d.status <> :excluded
       AND (LOWER(d.name) LIKE LOWER(CONCAT('%', :q, '%'))
-        OR LOWER(d.originalFilename) LIKE LOWER(CONCAT('%', :q, '%')))
+        OR LOWER(d.originalFilename) LIKE LOWER(CONCAT('%', :q, '%'))
+        OR LOWER(d.partyExternalId) LIKE LOWER(CONCAT('%', :q, '%')))
     ORDER BY d.createdAt DESC
     """)
     Page<Document> searchByName(

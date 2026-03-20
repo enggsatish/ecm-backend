@@ -24,11 +24,22 @@ public class DocumentWritebackService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
 
-    private static final String UPDATE_SQL = """
+    /** OCR extracted fields AND text — overwrites extracted_fields */
+    private static final String UPDATE_WITH_FIELDS_SQL = """
         UPDATE ecm_core.documents
            SET ocr_completed     = true,
                extracted_text    = ?,
                extracted_fields  = ?::jsonb,
+               status            = 'ACTIVE',
+               updated_at        = NOW()
+         WHERE id = ?
+        """;
+
+    /** OCR text only — preserves existing extracted_fields (e.g. from form submission data) */
+    private static final String UPDATE_TEXT_ONLY_SQL = """
+        UPDATE ecm_core.documents
+           SET ocr_completed     = true,
+               extracted_text    = ?,
                status            = 'ACTIVE',
                updated_at        = NOW()
          WHERE id = ?
@@ -44,12 +55,19 @@ public class DocumentWritebackService {
     public void writeSuccess(UUID documentId, String extractedText,
                              Map<String, Object> extractedFields) {
         try {
-            String fieldsJson = extractedFields == null || extractedFields.isEmpty()
-                    ? null
-                    : objectMapper.writeValueAsString(extractedFields);
-
-            int rows = jdbc.update(UPDATE_SQL, extractedText, fieldsJson, documentId);
-            log.info("OCR writeback success: documentId={}, rows={}", documentId, rows);
+            if (extractedFields != null && !extractedFields.isEmpty()) {
+                // OCR extracted structured fields — write them (overwrites any existing)
+                String fieldsJson = objectMapper.writeValueAsString(extractedFields);
+                int rows = jdbc.update(UPDATE_WITH_FIELDS_SQL, extractedText, fieldsJson, documentId);
+                log.info("OCR writeback success (with fields): documentId={}, fields={}, rows={}",
+                        documentId, extractedFields.size(), rows);
+            } else {
+                // No OCR fields extracted — only update text, preserve existing extracted_fields
+                // (which may have been pre-populated from form submission_data)
+                int rows = jdbc.update(UPDATE_TEXT_ONLY_SQL, extractedText, documentId);
+                log.info("OCR writeback success (text only, fields preserved): documentId={}, rows={}",
+                        documentId, rows);
+            }
         } catch (Exception e) {
             log.error("OCR writeback failed for documentId={}: {}", documentId, e.getMessage(), e);
             throw new WritebackException("Writeback failed for " + documentId, e);

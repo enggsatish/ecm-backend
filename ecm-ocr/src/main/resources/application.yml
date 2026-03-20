@@ -3,8 +3,6 @@ spring:
     name: ecm-ocr
 
   # ── Database ──────────────────────────────────────────────────────
-  # ecm-ocr uses JdbcTemplate only (cross-schema to ecm_core.documents).
-  # ecm-common brings data-jpa transitively — configure it passive.
   datasource:
     url:               jdbc:postgresql://localhost:5432/ecmdb
     username:          ecmuser
@@ -30,7 +28,6 @@ spring:
     enabled: false
 
   # ── RabbitMQ ────────────────────────────────────────────────────
-  # No listener.simple block — ackMode set in @RabbitListener only.
   rabbitmq:
     host:         localhost
     port:         5672
@@ -38,7 +35,7 @@ spring:
     password:     ecmrabbitpassword
     virtual-host: ecm
 
-  # ── OAuth2 — read by ecm-common SecurityConfig ──────────────────
+  # ── OAuth2 ──────────────────────────────────────────────────────
   security:
     oauth2:
       resourceserver:
@@ -48,12 +45,11 @@ spring:
 server:
   port: 8087
 
-# ── Okta audience — read by ecm-common AudienceValidator ─────────
 okta:
   oauth2:
     audience: api://sso-default
 
-# ── ECM module config ───────────────────────────────────────────────
+# ── ECM OCR config ──────────────────────────────────────────────────
 ecm:
   minio:
     endpoint:         ${MINIO_ENDPOINT:http://localhost:9000}
@@ -65,19 +61,84 @@ ecm:
     index-name: ecm-documents
 
   ocr:
-    max-file-size-bytes: 52428800   # 50 MB
-    tesseract-enabled:   true
+    # ── General ────────────────────────────────────────────────────
+    max-file-size-bytes: 52428800   # 50 MB — files above this skip OCR entirely
+    tesseract-enabled:   true       # master switch; false = embedded text only
+
+    # ── Tesseract Docker HTTP container ───────────────────────────
+    #
+    # When tesseract-server-enabled=true, the following content types are
+    # sent to the container for OCR instead of calling a local binary:
+    #
+    #   image/*          → bytes sent directly as multipart POST
+    #   application/pdf  → Tika extracts embedded text first;
+    #                      if chars < scanned-pdf-text-threshold, each page
+    #                      is rendered by PDFBox (300 DPI PNG) and sent to
+    #                      the container individually
+    #
+    tesseract-server-enabled:         true
+    tesseract-server-url:             ${TESSERACT_SERVER_URL:http://localhost:8884}
+
+    # API path — adjust to match your container image:
+    #   "/"           tesseract-server (npm), simpletesseract
+    #   "/tesseract"  python-tesseract-api-server (nickswebsite)
+    #   "/api/ocr"    custom wrappers
+    tesseract-server-api-path:        ${TESSERACT_API_PATH:/tesseract}
+
+    # Multipart field name the server expects for the image file
+    tesseract-server-file-field:      ${TESSERACT_FILE_FIELD:file}
+
+    # HTTP read timeout for a single Tesseract request (seconds)
+    # High-res TIFFs and large PDF pages can take 20–40 s
+    tesseract-server-timeout-seconds: ${TESSERACT_TIMEOUT_SECONDS:60}
+
+    # ── Scanned PDF detection ──────────────────────────────────────
+    #
+    # If Tika extracts fewer than this many characters from a PDF, the
+    # file is treated as a scanned PDF and page-by-page OCR is performed.
+    # Raise to 200-500 if fillable/partial-text PDFs are being re-OCR'd
+    # unnecessarily (they already have enough embedded text).
+    scanned-pdf-text-threshold: 50
+
+    # Maximum pages to OCR per scanned PDF.
+    # Pages beyond the limit are skipped; a truncation note is appended.
+    # Each A4 page at 300 DPI ≈ 3 MB PNG — peak heap ≈ 1 page at a time.
+    scanned-pdf-max-pages: 100
+
+    # DPI for rendering scanned PDF pages to images.
+    # 300 = Tesseract recommended minimum. Use 150 to halve memory at
+    # the cost of recognition accuracy on small fonts.
+    scanned-pdf-render-dpi: 300
+
+    # Tesseract language packs (used for both remote container and local binary)
     tesseract-languages: eng
 
-  # Required by ecm-common SecurityConfig (CorsConfigurationSource)
   security:
     allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
 
 management:
+  # Micrometer tracing — sampling probability
+  tracing:
+    sampling:
+      probability: 1.0     # 100% in dev; set to 0.1 (10%) in azure profile
+
+  # OTLP exporter endpoint — where to send traces
+  # Spring Boot 3.2+ auto-configures OtlpHttpSpanExporter when this is set
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces   # Jaeger OTLP/HTTP receiver
+    # Prometheus metrics endpoint
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name} # label all metrics with service name
+
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,prometheus,metrics
   endpoint:
     health:
       show-details: when-authorized
@@ -86,10 +147,12 @@ logging:
   level:
     com.ecm.ocr:                  DEBUG
     org.apache.tika:              WARN
+    org.apache.pdfbox:            WARN
     org.springframework.security: INFO
+    # Uncomment to trace HTTP calls to the Tesseract container:
+    # org.springframework.web.client: DEBUG
 
-# ── Azure profile — override only what changes in production ────────
-# Pattern from ecm-admin/application.yml
+# ── Azure profile ────────────────────────────────────────────────────
 ---
 spring:
   config:
@@ -123,3 +186,6 @@ ecm:
     port: ${OPENSEARCH_PORT:9200}
   security:
     allowed-origins: ${CORS_ORIGINS}
+  ocr:
+    tesseract-server-enabled: true
+    tesseract-server-url:     ${TESSERACT_SERVER_URL}

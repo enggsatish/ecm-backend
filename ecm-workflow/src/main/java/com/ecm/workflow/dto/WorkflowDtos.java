@@ -52,12 +52,6 @@ public class WorkflowDtos {
     /** Add a user to a workflow group. */
     public record AddMemberRequest(@NotNull Integer userId) {}
 
-    /** Create a category → workflow mapping. */
-    public record CreateCategoryMappingRequest(
-            @NotNull Integer categoryId,
-            @NotNull Integer workflowDefinitionId
-    ) {}
-
     /** Create or update a workflow definition. */
     public record WorkflowDefinitionRequest(
             @NotBlank String name,
@@ -137,17 +131,6 @@ public class WorkflowDtos {
             String groupKey,
             boolean active,
             int memberCount
-    ) {}
-
-    /**
-     * A category → workflow mapping entry.
-     */
-    public record CategoryMappingDto(
-            Integer id,
-            Integer categoryId,
-            Integer workflowDefinitionId,
-            String workflowDefinitionName,
-            Boolean active
     ) {}
 
     // ── SLA DTOs ──────────────────────────────────────────────────────

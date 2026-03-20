@@ -25,13 +25,12 @@ public class Product {
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    /**
-     * JSONB column — custom metadata field definitions.
-     * Example: {"fields":[{"key":"loanAmount","label":"Loan Amount","type":"currency","required":true}]}
-     */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "product_schema", columnDefinition = "jsonb")
     private String productSchema;
+
+    @Column(name = "case_workflow_key", length = 100)
+    private String caseWorkflowKey;
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
@@ -44,10 +43,15 @@ public class Product {
     private OffsetDateTime updatedAt;
 
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
-    private List<ProductCategoryLink> categoryLinks = new ArrayList<>();
+    private List<ProductDocumentType> documentTypes = new ArrayList<>();
 
     @Column(name = "product_line_id")
     private Integer productLineId;
+
+    @Column(name = "segment_id")
+    private Integer segmentId;
+
+    // ── Getters / Setters ─────────────────────────────────────────────────
 
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
@@ -59,16 +63,18 @@ public class Product {
     public void setDescription(String description) { this.description = description; }
     public String getProductSchema() { return productSchema; }
     public void setProductSchema(String productSchema) { this.productSchema = productSchema; }
+    public String getCaseWorkflowKey() { return caseWorkflowKey; }
+    public void setCaseWorkflowKey(String caseWorkflowKey) { this.caseWorkflowKey = caseWorkflowKey; }
     public Boolean getIsActive() { return isActive; }
     public void setIsActive(Boolean isActive) { this.isActive = isActive; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
-    public List<ProductCategoryLink> getCategoryLinks() { return categoryLinks; }
-    public void setCategoryLinks(List<ProductCategoryLink> categoryLinks) { this.categoryLinks = categoryLinks; }
-
-    public Integer getProductLineId() {
-        return productLineId;
-    }
+    public List<ProductDocumentType> getDocumentTypes() { return documentTypes; }
+    public void setDocumentTypes(List<ProductDocumentType> documentTypes) { this.documentTypes = documentTypes; }
+    public Integer getProductLineId() { return productLineId; }
+    public void setProductLineId(Integer productLineId) { this.productLineId = productLineId; }
+    public Integer getSegmentId() { return segmentId; }
+    public void setSegmentId(Integer segmentId) { this.segmentId = segmentId; }
 }

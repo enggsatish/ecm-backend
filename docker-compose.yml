@@ -131,7 +131,7 @@ services:
     image: hertzg/tesseract-server:latest
     container_name: ecm-tesseract
     ports:
-      - "8884:3000"
+      - "8884:8884"
     networks:
       - ecm-network
   # ─── pgAdmin ──────────────────────────────────────────────────
@@ -149,6 +149,51 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - ecm-network
+
+  # ── Jaeger All-in-One ────────────────────────────────────────────────────────
+  # Single container: collector + query + UI + in-memory storage
+  # Perfect for dev — no Kafka, no Elasticsearch needed
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: ecm-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true          # enable OTLP receiver
+      - LOG_LEVEL=warn
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC (alternative)
+      - "4318:4318"     # OTLP HTTP  ← Spring Boot default endpoint
+      - "14268:14268"   # Jaeger HTTP (legacy thrift, not needed with OTLP)
+    restart: unless-stopped
+    networks:
+      - ecm-network
+
+  # ── Prometheus (optional — for metrics alongside traces) ─────────────────────
+  # Comment out if you only want tracing for now
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: ecm-prometheus
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"     # Prometheus UI + query API
+    restart: unless-stopped
+    networks:
+      - ecm-network
+
+
+  # ─── Mailpit (dev email testing) ──────────────────────────────
+  # Catches all outgoing emails — no real delivery
+  # SMTP: localhost:1025  |  Web UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ecm-mailpit
+    ports:
+      - "1025:1025"    # SMTP
+      - "8025:8025"    # Web UI
+    restart: unless-stopped
     networks:
       - ecm-network
 
