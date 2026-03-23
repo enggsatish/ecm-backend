@@ -108,17 +108,25 @@ public class WorkflowInstanceService {
         vars.put("instanceRecordId", record.getId().toString());
 
         // Start the Flowable process
-        ProcessInstance pi = runtimeService.startProcessInstanceByKey(
-                def.getProcessKey(),
-                "doc:" + documentId,   // business key for easy lookup
-                vars);
+        try {
+            ProcessInstance pi = runtimeService.startProcessInstanceByKey(
+                    def.getProcessKey(),
+                    "doc:" + documentId,   // business key for easy lookup
+                    vars);
 
-        // Update record with real Flowable process instance ID
-        record.setProcessInstanceId(pi.getId());
-        record = instanceRecordRepo.save(record);
+            // Update record with real Flowable process instance ID
+            record.setProcessInstanceId(pi.getId());
+            record = instanceRecordRepo.save(record);
 
-        log.info("Workflow started: processInstanceId={}, documentId={}, trigger={}, group={}",
-                pi.getId(), documentId, triggerType, candidateGroup);
+            log.info("Workflow started: processInstanceId={}, documentId={}, trigger={}, group={}",
+                    pi.getId(), documentId, triggerType, candidateGroup);
+        } catch (Exception e) {
+            record.setStatus(WorkflowInstanceRecord.Status.FAILED);
+            record.setProcessInstanceId("FAILED:" + e.getMessage().substring(0, Math.min(200, e.getMessage().length())));
+            instanceRecordRepo.save(record);
+            log.error("Failed to start Flowable process for document {}: {}", documentId, e.getMessage(), e);
+            throw new IllegalStateException("Workflow engine failed to start process: " + e.getMessage(), e);
+        }
 
         return toDto(record);
     }
@@ -223,15 +231,50 @@ public class WorkflowInstanceService {
         }
 
         // Tell Flowable to delete the process instance
-        runtimeService.deleteProcessInstance(
-                record.getProcessInstanceId(),
-                "Cancelled by " + cancelledBySubject);
+        try {
+            runtimeService.deleteProcessInstance(
+                    record.getProcessInstanceId(),
+                    "Cancelled by " + cancelledBySubject);
+        } catch (Exception e) {
+            log.warn("Flowable process instance deletion failed for {} — marking cancelled anyway: {}",
+                    record.getProcessInstanceId(), e.getMessage());
+        }
 
         record.setStatus(Status.CANCELLED);
         record.setCompletedAt(OffsetDateTime.now());
         instanceRecordRepo.save(record);
 
         log.info("Workflow cancelled: id={}, by={}", id, cancelledBySubject);
+    }
+
+    /**
+     * Cancel a workflow by its Flowable processInstanceId.
+     * Used when a case is cancelled/rejected — ecm-admin sends the processInstanceId.
+     */
+    @Transactional
+    public void cancelByProcessInstanceId(String processInstanceId, String reason) {
+        Optional<WorkflowInstanceRecord> opt = instanceRecordRepo.findByProcessInstanceId(processInstanceId);
+        if (opt.isEmpty()) {
+            log.warn("No workflow instance record for processInstanceId={} — may already be completed", processInstanceId);
+            return;
+        }
+
+        WorkflowInstanceRecord record = opt.get();
+        if (record.getStatus() != Status.ACTIVE && record.getStatus() != Status.INFO_REQUESTED) {
+            log.debug("Workflow {} is already {} — skipping cancel", processInstanceId, record.getStatus());
+            return;
+        }
+
+        try {
+            runtimeService.deleteProcessInstance(processInstanceId, reason);
+        } catch (Exception e) {
+            log.warn("Flowable delete failed for {} — marking cancelled anyway: {}", processInstanceId, e.getMessage());
+        }
+
+        record.setStatus(Status.CANCELLED);
+        record.setCompletedAt(OffsetDateTime.now());
+        instanceRecordRepo.save(record);
+        log.info("Workflow cancelled via case closure: processInstanceId={}", processInstanceId);
     }
 
     // ── Mapping ───────────────────────────────────────────────────────────

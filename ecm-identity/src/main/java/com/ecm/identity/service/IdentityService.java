@@ -76,9 +76,10 @@ public class IdentityService {
                         }
                     }
 
-                    // Case C: Truly new user — first time anyone with this identity has logged in.
-                    // Sprint G: provisioned with NO roles. Admin must assign via ECM admin UI.
-                    log.info("First login — provisioning new user with no roles: {}", email);
+                    // Case C: Unknown user — create record with NO roles.
+                    // User will see NO_ACCESS until SUPER_ADMIN assigns a role via Admin UI
+                    // (or via SQL seed for the first SUPER_ADMIN).
+                    log.info("First login — creating user with no roles: {}", email);
 
                     User newUser = User.builder()
                             .entraObjectId(subject)

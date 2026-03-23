@@ -35,14 +35,14 @@ public class RolePermissionController {
 
     /** List all roles with permission count and user count */
     @GetMapping("/roles")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<List<RoleDto>>> listRoles() {
         return ResponseEntity.ok(ApiResponse.ok(rolePermissionService.listAllRoles()));
     }
 
     /** Get a single role with its full permission list */
     @GetMapping("/roles/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<RoleDto>> getRole(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(rolePermissionService.getRole(id)));
     }
@@ -113,7 +113,7 @@ public class RolePermissionController {
 
     /** List all 24 permission codes grouped by module */
     @GetMapping("/permissions")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<List<PermissionDto>>> listPermissions() {
         return ResponseEntity.ok(ApiResponse.ok(rolePermissionService.listAllPermissions()));
     }
@@ -122,7 +122,7 @@ public class RolePermissionController {
 
     /** List all capability bundles with their included permissions */
     @GetMapping("/bundles")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<List<BundleDto>>> listBundles() {
         return ResponseEntity.ok(ApiResponse.ok(rolePermissionService.listAllBundles()));
     }

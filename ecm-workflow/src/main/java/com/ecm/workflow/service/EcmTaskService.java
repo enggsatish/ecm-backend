@@ -126,8 +126,13 @@ public class EcmTaskService {
 
         assertUserCanActOnTask(task, userSubject, userGroups);
 
-        flowableTaskService.claim(taskId, userSubject);
-        log.info("Task claimed: taskId={}, by={}", taskId, userSubject);
+        try {
+            flowableTaskService.claim(taskId, userSubject);
+            log.info("Task claimed: taskId={}, by={}", taskId, userSubject);
+        } catch (Exception e) {
+            log.error("Failed to claim task {}: {}", taskId, e.getMessage(), e);
+            throw new IllegalStateException("Failed to claim task: " + e.getMessage(), e);
+        }
 
         return toDto(requireTask(taskId));
     }
@@ -188,18 +193,23 @@ public class EcmTaskService {
         Task task = requireTask(taskId);
         assertUserCanActOnTask(task, userSubject, userGroups);
 
-        // Add comment as a task variable (visible in history)
-        flowableTaskService.addComment(taskId, task.getProcessInstanceId(),
-                "REQUEST_INFO: " + req.comment());
+        try {
+            // Add comment as a task variable (visible in history)
+            flowableTaskService.addComment(taskId, task.getProcessInstanceId(),
+                    "REQUEST_INFO: " + req.comment());
 
-        // Set variable so the UI can show the status
-        flowableTaskService.setVariable(taskId, "infoRequested", true);
-        flowableTaskService.setVariable(taskId, "infoRequestComment", req.comment());
+            // Set variable so the UI can show the status
+            flowableTaskService.setVariable(taskId, "infoRequested", true);
+            flowableTaskService.setVariable(taskId, "infoRequestComment", req.comment());
 
-        // Mark instance record so submitter sees it needs attention
-        workflowInstanceService.markInfoRequested(task.getProcessInstanceId());
+            // Mark instance record so submitter sees it needs attention
+            workflowInstanceService.markInfoRequested(task.getProcessInstanceId());
 
-        log.info("Info requested: taskId={}, by={}", taskId, userSubject);
+            log.info("Info requested: taskId={}, by={}", taskId, userSubject);
+        } catch (Exception e) {
+            log.error("Failed to request info on task {}: {}", taskId, e.getMessage(), e);
+            throw new IllegalStateException("Failed to request info: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -234,11 +244,16 @@ public class EcmTaskService {
         vars.put("comment",         comment != null ? comment : "");
         vars.put("infoProvidedBy",  userSubject);
 
-        flowableTaskService.complete(taskId, vars);
-        log.info("Info provided: taskId={}, by={}", taskId, userSubject);
+        try {
+            flowableTaskService.complete(taskId, vars);
+            log.info("Info provided: taskId={}, by={}", taskId, userSubject);
 
-        // Transition instance back to ACTIVE — reviewer queue will pick it up
-        workflowInstanceService.markInfoProvided(processInstanceId);
+            // Transition instance back to ACTIVE — reviewer queue will pick it up
+            workflowInstanceService.markInfoProvided(processInstanceId);
+        } catch (Exception e) {
+            log.error("Failed to provide info on task {}: {}", taskId, e.getMessage(), e);
+            throw new IllegalStateException("Failed to provide info: " + e.getMessage(), e);
+        }
 
         // Return a summary DTO (task is now completed, so return a placeholder)
         return new WorkflowTaskDto(taskId, "Provide Additional Information",
@@ -253,18 +268,23 @@ public class EcmTaskService {
         Task task = requireTask(taskId);
         assertUserCanActOnTask(task, userSubject, userGroups);
 
-        // Auto-claim if not already claimed (convenience — reviewer doesn't have to claim first)
-        if (task.getAssignee() == null) {
-            flowableTaskService.claim(taskId, userSubject);
+        try {
+            // Auto-claim if not already claimed (convenience — reviewer doesn't have to claim first)
+            if (task.getAssignee() == null) {
+                flowableTaskService.claim(taskId, userSubject);
+            }
+
+            Map<String, Object> vars = new HashMap<>();
+            vars.put("decision",   decision);
+            vars.put("comment",    comment != null ? comment : "");
+            vars.put("reviewedBy", userSubject);
+
+            flowableTaskService.complete(taskId, vars);
+            log.info("Task completed: taskId={}, decision={}, by={}", taskId, decision, userSubject);
+        } catch (Exception e) {
+            log.error("Failed to complete task {}: {}", taskId, e.getMessage(), e);
+            throw new IllegalStateException("Failed to complete task: " + e.getMessage(), e);
         }
-
-        Map<String, Object> vars = new HashMap<>();
-        vars.put("decision",   decision);
-        vars.put("comment",    comment != null ? comment : "");
-        vars.put("reviewedBy", userSubject);
-
-        flowableTaskService.complete(taskId, vars);
-        log.info("Task completed: taskId={}, decision={}, by={}", taskId, decision, userSubject);
     }
 
     /**
@@ -275,8 +295,8 @@ public class EcmTaskService {
     private void assertUserCanActOnTask(Task task, String userSubject, List<String> userGroups) {
         if (userSubject.equals(task.getAssignee())) return;
 
-        // ECM_ADMIN can act on any task regardless of candidate group
-        if (userGroups.contains("ECM_ADMIN")) return;
+        // ECM_ADMIN or ECM_SUPER_ADMIN can act on any task regardless of candidate group
+        if (userGroups.contains("ECM_ADMIN") || userGroups.contains("ECM_SUPER_ADMIN")) return;
 
         // Check candidate groups
         List<String> taskCandidateGroups = flowableTaskService.getIdentityLinksForTask(task.getId())
@@ -393,8 +413,13 @@ public class EcmTaskService {
         if (task.getAssignee() == null) {
             throw new IllegalStateException("Task is not claimed");
         }
-        flowableTaskService.unclaim(taskId);
-        log.info("Admin force-released task: taskId={}, was assigned to={}", taskId, task.getAssignee());
+        try {
+            flowableTaskService.unclaim(taskId);
+            log.info("Admin force-released task: taskId={}, was assigned to={}", taskId, task.getAssignee());
+        } catch (Exception e) {
+            log.error("Failed to release task {}: {}", taskId, e.getMessage(), e);
+            throw new IllegalStateException("Failed to release task: " + e.getMessage(), e);
+        }
     }
 
     /**

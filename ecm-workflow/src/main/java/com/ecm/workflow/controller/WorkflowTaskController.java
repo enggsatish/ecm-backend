@@ -87,7 +87,7 @@ public class WorkflowTaskController {
     }
 
     @GetMapping("/pending")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<List<WorkflowTaskDto>>> pending(
             Authentication auth) {                                    // ← FIXED
 
@@ -104,7 +104,7 @@ public class WorkflowTaskController {
     }
 
     @GetMapping("/queue")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<List<TaskQueueItemDto>>> getQueue(
             @RequestParam(defaultValue = "false") boolean assignedToMe,
             Authentication auth) {                                    // ← FIXED
@@ -133,7 +133,7 @@ public class WorkflowTaskController {
     }
 
     @PostMapping("/{taskId}/admin-release")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "TASK_ADMIN_RELEASED", resourceType = "WORKFLOW_TASK")
     public ResponseEntity<ApiResponse<Void>> adminRelease(
             @PathVariable String taskId,
@@ -158,7 +158,7 @@ public class WorkflowTaskController {
     // ── Claim / Unclaim / Release ─────────────────────────────────────────────
 
     @PostMapping("/{taskId}/claim")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     @AuditLog(event = "TASK_CLAIMED", resourceType = "WORKFLOW_TASK")
     public ResponseEntity<ApiResponse<WorkflowTaskDto>> claim(
             @PathVariable String taskId,
@@ -183,7 +183,7 @@ public class WorkflowTaskController {
     }
 
     @PostMapping("/{taskId}/unclaim")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<Void>> unclaim(
             @PathVariable String taskId,
             @AuthenticationPrincipal Jwt jwt) {                      // ← already correct
@@ -193,7 +193,7 @@ public class WorkflowTaskController {
     }
 
     @PostMapping("/{taskId}/release")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     @AuditLog(event = "TASK_RELEASED", resourceType = "WORKFLOW_TASK")
     public ResponseEntity<ApiResponse<Void>> release(
             @PathVariable String taskId,
@@ -218,7 +218,7 @@ public class WorkflowTaskController {
     // ── Approve ───────────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/approve")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     @AuditLog(event = "DOCUMENT_APPROVED", resourceType = "WORKFLOW_TASK", severity = "INFO")
     public ResponseEntity<ApiResponse<Void>> approve(
             @PathVariable String taskId,
@@ -245,7 +245,7 @@ public class WorkflowTaskController {
     // ── Reject ────────────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/reject")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     @AuditLog(event = "DOCUMENT_REJECTED", resourceType = "WORKFLOW_TASK", severity = "WARN")
     public ResponseEntity<ApiResponse<Void>> reject(
             @PathVariable String taskId,
@@ -277,7 +277,7 @@ public class WorkflowTaskController {
     // ── Request Info ──────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/request-info")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     @AuditLog(event = "INFO_REQUESTED", resourceType = "WORKFLOW_TASK")
     public ResponseEntity<ApiResponse<Void>> requestInfo(
             @PathVariable String taskId,
@@ -305,7 +305,7 @@ public class WorkflowTaskController {
     // ── Pass ──────────────────────────────────────────────────────────────────
 
     @PostMapping("/{taskId}/pass")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'workflow:claim')")
     @AuditLog(event = "TASK_PASSED", resourceType = "WORKFLOW_TASK")
     public ResponseEntity<ApiResponse<Void>> pass(
             @PathVariable String taskId,

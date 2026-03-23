@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import java.util.Map;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -46,7 +47,7 @@ public class CustomerController {
      * Returns active parties, sorted by displayName.
      */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
     public ResponseEntity<ApiResponse<Page<PartyDto>>> list(
             @RequestParam(required = false)       String q,
             @RequestParam(defaultValue = "0")     int    page,
@@ -60,7 +61,7 @@ public class CustomerController {
     // ── Get by ID (with enrollments) ───────────────────────────────────────────
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
     public ResponseEntity<ApiResponse<PartyDto>> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(partyService.getByIdWithEnrollments(id)));
     }
@@ -68,7 +69,7 @@ public class CustomerController {
     // ── Create ────────────────────────────────────────────────────────────────
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
     public ResponseEntity<ApiResponse<PartyDto>> create(
             @Valid @RequestBody  PartyRequest req,
             @AuthenticationPrincipal Jwt      jwt
@@ -84,7 +85,7 @@ public class CustomerController {
     // ── Update ────────────────────────────────────────────────────────────────
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:UPDATE')")
     public ResponseEntity<ApiResponse<PartyDto>> update(
             @PathVariable                UUID         id,
             @Valid @RequestBody          PartyRequest req,
@@ -102,7 +103,7 @@ public class CustomerController {
      * No hard deletes in ECM.
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:UPDATE')")
     public ResponseEntity<ApiResponse<Void>> deactivate(
             @PathVariable                UUID id,
             @AuthenticationPrincipal     Jwt  jwt
@@ -115,7 +116,7 @@ public class CustomerController {
     // ── Product Enrollments ────────────────────────────────────────────────
 
     @PostMapping("/{id}/enrollments")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
     public ResponseEntity<ApiResponse<PartyDto>> addEnrollment(
             @PathVariable UUID id,
             @RequestBody PartyDto.EnrollmentRequest req,
@@ -127,12 +128,20 @@ public class CustomerController {
     }
 
     @DeleteMapping("/{id}/enrollments/{enrollmentId}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
     public ResponseEntity<ApiResponse<Void>> removeEnrollment(
             @PathVariable UUID id,
             @PathVariable Integer enrollmentId
     ) {
         partyService.removeEnrollment(id, enrollmentId);
         return ResponseEntity.ok(ApiResponse.ok(null, "Enrollment removed"));
+    }
+
+    // ── Customer Portfolio ────────────────────────────────────────────────────
+
+    @GetMapping("/{id}/portfolio")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getPortfolio(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(partyService.getPortfolio(id)));
     }
 }

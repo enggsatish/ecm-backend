@@ -13,16 +13,28 @@ public class AdminRabbitConfig {
     public static final String ADMIN_EXCHANGE       = "ecm.admin";
     public static final String RK_USER_DEACTIVATED  = "user.deactivated";
     public static final String RK_CATEGORY_UPDATED  = "category.updated";
+    public static final String RK_CASE_OTP          = "case.otp.requested";
+    public static final String RK_CASE_INVITE       = "case.participant.added";
     public static final String Q_USER_DEACTIVATED   = "ecm.admin.user.deactivated";
     public static final String Q_CATEGORY_UPDATED   = "ecm.admin.category.updated";
+
+    // Workflow exchange — ecm-admin listens for workflow completion events
+    public static final String WORKFLOW_EXCHANGE     = "ecm.workflow";
+    public static final String Q_WORKFLOW_COMPLETED  = "ecm.admin.workflow.completed";
 
     @Bean
     TopicExchange adminExchange() {
         return ExchangeBuilder.topicExchange(ADMIN_EXCHANGE).durable(true).build();
     }
 
+    @Bean
+    TopicExchange workflowExchange() {
+        return ExchangeBuilder.topicExchange(WORKFLOW_EXCHANGE).durable(true).build();
+    }
+
     @Bean Queue userDeactivatedQueue() { return QueueBuilder.durable(Q_USER_DEACTIVATED).build(); }
     @Bean Queue categoryUpdatedQueue() { return QueueBuilder.durable(Q_CATEGORY_UPDATED).build(); }
+    @Bean Queue workflowCompletedQueue() { return QueueBuilder.durable(Q_WORKFLOW_COMPLETED).build(); }
 
     @Bean
     Binding userDeactivatedBinding(TopicExchange adminExchange) {
@@ -32,6 +44,11 @@ public class AdminRabbitConfig {
     @Bean
     Binding categoryUpdatedBinding(TopicExchange adminExchange) {
         return BindingBuilder.bind(categoryUpdatedQueue()).to(adminExchange).with(RK_CATEGORY_UPDATED);
+    }
+
+    @Bean
+    Binding workflowCompletedBinding(Queue workflowCompletedQueue, TopicExchange workflowExchange) {
+        return BindingBuilder.bind(workflowCompletedQueue).to(workflowExchange).with("workflow.completed");
     }
 
     @Bean

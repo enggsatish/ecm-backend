@@ -54,9 +54,11 @@ public class DocumentUploadedListener {
                     documentId, partyExternalId, categoryId);
 
             // ── 1. Resolve template ──────────────────────────────────────────
-            // After v4.0 refactor, workflow routing for case-driven documents is handled
-            // by the case workflow. For ad-hoc uploads, we use the system default template.
-            Optional<WorkflowTemplate> templateOpt = templateResolver.resolveDefault();
+            // Resolution order:
+            //   1. Category→workflow mapping (admin-configured per document category)
+            //   2. Default template (fallback for uncategorised or unmapped uploads)
+            //   3. Skip workflow (just OCR)
+            Optional<WorkflowTemplate> templateOpt = templateResolver.resolve(categoryId);
 
             if (templateOpt.isEmpty()) {
                 // No template configured yet — normal on a fresh install.

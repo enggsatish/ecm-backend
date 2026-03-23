@@ -27,26 +27,26 @@ public class WorkflowTemplateController {
     // ─── CRUD ────────────────────────────────────────────────────────────────
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
     public ResponseEntity<ApiResponse<List<WorkflowTemplate>>> list() {
         return ResponseEntity.ok(ApiResponse.ok(service.listAll()));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
     public ResponseEntity<ApiResponse<WorkflowTemplate>> getById(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(service.getById(id)));
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
     @AuditLog(event = "TEMPLATE_CREATED", resourceType = "WORKFLOW_TEMPLATE")
     public ResponseEntity<ApiResponse<WorkflowTemplate>> create(
             @Valid @RequestBody CreateTemplateRequest req,
             @AuthenticationPrincipal Jwt jwt) {
         WorkflowTemplate created = service.create(
                 req.dsl(), req.slaHours(), req.warningThresholdPct(),
-                req.escalationHours(), req.escalationGroupKey(),
+                req.escalationHours(), req.escalationGroupKey(), req.tags(),
                 jwt.getClaimAsString("email"));
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(created, "Template created"));
@@ -55,7 +55,7 @@ public class WorkflowTemplateController {
     // ─── DSL update (simple / legacy step builder) ───────────────────────────
 
     @PutMapping("/{id}/dsl")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
     @AuditLog(event = "TEMPLATE_DSL_UPDATED", resourceType = "WORKFLOW_TEMPLATE")
     public ResponseEntity<ApiResponse<WorkflowTemplate>> updateDsl(
             @PathVariable Integer id,
@@ -78,7 +78,7 @@ public class WorkflowTemplateController {
             value = "/{id}/bpmn",
             consumes = { MediaType.APPLICATION_XML_VALUE, MediaType.TEXT_XML_VALUE, MediaType.TEXT_PLAIN_VALUE }
     )
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
     @AuditLog(event = "TEMPLATE_BPMN_UPDATED", resourceType = "WORKFLOW_TEMPLATE")
     public ResponseEntity<ApiResponse<WorkflowTemplate>> updateBpmn(
             @PathVariable Integer id,
@@ -90,7 +90,7 @@ public class WorkflowTemplateController {
     // ─── Lifecycle ───────────────────────────────────────────────────────────
 
     @PostMapping("/{id}/publish")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "TEMPLATE_PUBLISHED", resourceType = "WORKFLOW_TEMPLATE")
     public ResponseEntity<ApiResponse<WorkflowTemplate>> publish(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(
@@ -98,10 +98,49 @@ public class WorkflowTemplateController {
     }
 
     @PostMapping("/{id}/deprecate")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "TEMPLATE_DEPRECATED", resourceType = "WORKFLOW_TEMPLATE")
     public ResponseEntity<ApiResponse<WorkflowTemplate>> deprecate(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(service.deprecate(id), "Template deprecated"));
+    }
+
+    // ─── Delete ───────────────────────────────────────────────────────────────
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
+    @AuditLog(event = "TEMPLATE_DELETED", resourceType = "WORKFLOW_TEMPLATE")
+    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Integer id) {
+        service.delete(id);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Template deleted"));
+    }
+
+    // ─── Update meta (name / processKey) ────────────────────────────────────
+
+    @PatchMapping("/{id}/meta")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
+    @AuditLog(event = "TEMPLATE_META_UPDATED", resourceType = "WORKFLOW_TEMPLATE")
+    public ResponseEntity<ApiResponse<WorkflowTemplate>> updateMeta(
+            @PathVariable Integer id,
+            @RequestBody UpdateMetaRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                service.updateMeta(id, req.name(), req.processKey(), req.tags()),
+                "Template updated"));
+    }
+
+    public record UpdateMetaRequest(String name, String processKey, java.util.List<String> tags) {}
+
+    // ─── Clone ───────────────────────────────────────────────────────────────
+
+    @PostMapping("/{id}/clone")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
+    @AuditLog(event = "TEMPLATE_CLONED", resourceType = "WORKFLOW_TEMPLATE")
+    public ResponseEntity<ApiResponse<WorkflowTemplate>> clone(
+            @PathVariable Integer id,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(
+                        service.clone(id, jwt.getClaimAsString("email")),
+                        "Template cloned as new draft"));
     }
 
     // ─── Preview ─────────────────────────────────────────────────────────────
@@ -112,7 +151,7 @@ public class WorkflowTemplateController {
      * Used by the bpmn.io frontend designer to seed the modeler on load.
      */
     @GetMapping(value = "/{id}/preview-bpmn", produces = MediaType.APPLICATION_XML_VALUE)
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'workflow:design')")
     public ResponseEntity<String> previewBpmn(@PathVariable Integer id) {
         return ResponseEntity.ok(service.previewBpmn(id));
     }
@@ -124,6 +163,7 @@ public class WorkflowTemplateController {
             Integer slaHours,
             Integer warningThresholdPct,
             Integer escalationHours,
-            String escalationGroupKey
+            String escalationGroupKey,
+            java.util.List<String> tags
     ) {}
 }

@@ -65,7 +65,7 @@ public class WorkflowInstanceController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<Page<WorkflowInstanceDto>>> listAll(
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "20") int size) {
@@ -76,7 +76,7 @@ public class WorkflowInstanceController {
     }
 
     @GetMapping("/active")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<Page<WorkflowInstanceDto>>> listActive(
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "20") int size) {
@@ -106,13 +106,31 @@ public class WorkflowInstanceController {
                 workflowInstanceService.listByDocument(documentId)));
     }
 
+    /**
+     * Internal service-to-service start endpoint.
+     * Called by ecm-admin's CaseService when an admin clicks "Start WF" on a checklist item.
+     * Does not require JWT — uses startedBy from the request body.
+     */
+    @PostMapping("/internal-start")
+    public ResponseEntity<ApiResponse<WorkflowInstanceDto>> internalStart(
+            @RequestBody @Valid StartWorkflowRequest req,
+            @RequestParam(defaultValue = "system") String startedBy) {
+
+        WorkflowInstanceDto instance =
+                workflowInstanceService.startManual(req, startedBy, startedBy);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(instance, "Workflow started (internal)"));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<WorkflowInstanceDto>> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(workflowInstanceService.getById(id)));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "WORKFLOW_CANCELLED", resourceType = "WORKFLOW", severity = "WARN")
     public ResponseEntity<ApiResponse<Void>> cancel(
             @PathVariable UUID id,
@@ -145,7 +163,7 @@ public class WorkflowInstanceController {
 
     /** GET /api/workflow/sla/summary — dashboard counts */
     @GetMapping("/sla/summary")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<Map<String, Long>>> slaSummary() {
         List<Object[]> rows = workflowSlaTrackingRepository.countByStatus();
         Map<String, Long> summary = new LinkedHashMap<>();
@@ -161,7 +179,7 @@ public class WorkflowInstanceController {
 
     /** GET /api/workflow/sla/overdue — paginated overdue list for dashboard table */
     @GetMapping("/sla/overdue")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<List<WorkflowSlaTracking>>> slaOverdue() {
         List<WorkflowSlaTracking> overdue = workflowSlaTrackingRepository
                 .findBreached(LocalDateTime.now().plusYears(100)); // all non-completed

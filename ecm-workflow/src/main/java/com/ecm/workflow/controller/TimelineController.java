@@ -26,7 +26,7 @@ public class TimelineController {
     private final TimelineService timelineService;
 
     @GetMapping("/document/{documentId}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<List<TimelineEvent>>> getDocumentTimeline(
             @PathVariable UUID documentId) {
         return ResponseEntity.ok(ApiResponse.ok(
@@ -34,7 +34,7 @@ public class TimelineController {
     }
 
     @GetMapping("/submission/{submissionId}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<List<TimelineEvent>>> getSubmissionTimeline(
             @PathVariable UUID submissionId) {
         return ResponseEntity.ok(ApiResponse.ok(

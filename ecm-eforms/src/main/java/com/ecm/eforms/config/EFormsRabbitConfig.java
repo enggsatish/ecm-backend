@@ -143,10 +143,18 @@ public class EFormsRabbitConfig {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(cf);
         factory.setMessageConverter(messageConverter());
-        // OTEL: creates a Micrometer Observation for every message delivery
         factory.setObservationEnabled(true);
-        //factory.setMicrometerEnabled(true);
-        //factory.setObservationRegistry(observationRegistry);
+
+        // Prevent infinite requeue loop on exceptions.
+        factory.setDefaultRequeueRejected(false);
+        factory.setAdviceChain(
+            org.springframework.amqp.rabbit.config.RetryInterceptorBuilder
+                .stateless()
+                .maxAttempts(3)
+                .backOffOptions(1000, 2.0, 10000)
+                .build()
+        );
+
         return factory;
     }
 }

@@ -43,6 +43,9 @@ public class DocumentPromotionClient {
     @Value("${ecm.services.document-url:http://localhost:8082}")
     private String documentServiceUrl;
 
+    @Value("${spring.application.name:ecm-eforms}")
+    private String serviceName;
+
     /**
      * Uploads a PDF byte array to ecm-document as a new document record.
      *
@@ -78,7 +81,7 @@ public class DocumentPromotionClient {
             // Request headers
             HttpHeaders requestHeaders = new HttpHeaders();
             requestHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
-            requestHeaders.set("X-Internal-Service", "ecm-eforms");
+            requestHeaders.set("X-Internal-Service", serviceName);
 
             ResponseEntity<Map> response = restTemplate.postForEntity(
                     documentServiceUrl + "/api/documents/upload",

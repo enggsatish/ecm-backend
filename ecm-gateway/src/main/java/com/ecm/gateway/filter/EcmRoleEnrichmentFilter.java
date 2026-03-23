@@ -75,6 +75,21 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // External participant endpoints — no JWT, OTP/session based auth.
+        // Still strip X-ECM-* headers to prevent injection, then pass through
+        // without enrichment (no JWT to enrich from).
+        if (path.contains("/cases/external/")) {
+            ServerHttpRequest stripped = exchange.getRequest().mutate()
+                    .headers(h -> {
+                        h.remove(HDR_ROLES);
+                        h.remove(HDR_PERMISSIONS);
+                        h.remove(HDR_SUBJECT);
+                        h.remove(HDR_EMAIL);
+                    })
+                    .build();
+            return chain.filter(exchange.mutate().request(stripped).build());
+        }
+
         // STEP 1: Strip incoming X-ECM-* headers (prevent header injection by clients)
         ServerHttpRequest stripped = exchange.getRequest().mutate()
                 .headers(h -> {

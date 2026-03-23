@@ -24,4 +24,6 @@ public interface WorkflowInstanceRecordRepository
 
     Page<WorkflowInstanceRecord> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
+    long countByTemplateIdAndStatus(Integer templateId, WorkflowInstanceRecord.Status status);
+
 }

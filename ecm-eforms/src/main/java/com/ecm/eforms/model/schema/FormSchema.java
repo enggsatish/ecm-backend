@@ -20,6 +20,7 @@ public class FormSchema {
     private List<FormSection>     sections;
     private List<RuleDsl.RuleSet> globalRules;    // cross-field rules
     private String                layout       = "SINGLE_PAGE"; // SINGLE_PAGE | WIZARD
+    private String                labelPosition = "inline";      // inline | top
     private boolean               allowSaveDraft = true;
     private boolean               confirmOnSubmit = false;
     private Integer               estimatedMinutes;

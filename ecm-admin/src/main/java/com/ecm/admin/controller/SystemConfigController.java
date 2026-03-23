@@ -19,20 +19,20 @@ public class SystemConfigController {
 
     /** All roles can read config (for white-label branding, etc.) */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER', 'ECM_READONLY')")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<List<TenantConfigDto>>> listAll() {
         return ResponseEntity.ok(ApiResponse.ok(service.listAll()));
     }
 
     @GetMapping("/{key}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<TenantConfigDto>> get(@PathVariable String key) {
         return ResponseEntity.ok(ApiResponse.ok(service.get(key)));
     }
 
     /** Upsert a single key */
     @PutMapping("/{key}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<TenantConfigDto>> upsert(
             @PathVariable String key, @Valid @RequestBody TenantConfigDto.UpdateRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(service.upsert(key, req), "Config saved"));
@@ -40,9 +40,16 @@ public class SystemConfigController {
 
     /** Bulk upsert — save entire settings form at once */
     @PutMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<List<TenantConfigDto>>> bulkUpdate(
             @Valid @RequestBody TenantConfigDto.BulkUpdateRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(service.bulkUpdate(req.getConfigs()), "Config saved"));
+    }
+
+    /** Reset all settings to their default values */
+    @PostMapping("/reset")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
+    public ResponseEntity<ApiResponse<List<TenantConfigDto>>> resetToDefaults() {
+        return ResponseEntity.ok(ApiResponse.ok(service.resetToDefaults(), "Settings reset to defaults"));
     }
 }

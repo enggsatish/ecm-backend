@@ -237,6 +237,20 @@ public class UserAdminService {
                 newUserId, role.getId());
 
         log.info("Invited user email={} with initial role={}", email, roleName);
+
+        // Send invitation email immediately via RabbitMQ → notification service
+        try {
+            rabbit.convertAndSend("ecm.admin", "user.invited", Map.of(
+                    "email", email,
+                    "displayName", req.getDisplayName() != null ? req.getDisplayName().trim() : email,
+                    "role", roleName
+            ));
+            log.info("User invite email event published for {}", email);
+        } catch (Exception e) {
+            log.warn("Failed to publish user invite email event for {}: {}", email, e.getMessage());
+            // Non-fatal — user is still created, just no email
+        }
+
         return getById(newUserId);
     }
 

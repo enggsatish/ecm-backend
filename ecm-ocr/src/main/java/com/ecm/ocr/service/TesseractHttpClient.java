@@ -1,6 +1,8 @@
 package com.ecm.ocr.service;
 
 import com.ecm.ocr.properties.OcrProperties;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +55,7 @@ import org.springframework.web.client.RestClientException;
 public class TesseractHttpClient {
 
     private final OcrProperties props;
+    private final ObjectMapper  objectMapper;
 
     private RestClient restClient;
 
@@ -176,38 +179,30 @@ public class TesseractHttpClient {
      * Older versions return plain text directly.
      * We try JSON first; fall back to treating the entire response as plain text.
      */
-    private static String parseText(String raw) {
+    private String parseText(String raw) {
         if (raw == null || raw.isBlank()) return "";
         String trimmed = raw.strip();
 
-        // JSON response — extract the "text" field
+        // JSON response — parse with Jackson for robust handling of all formats
         if (trimmed.startsWith("{")) {
-            // Simple extraction without a JSON library dependency in this method.
-            // Handles: {"text":"extracted content here","hocr":...}
-            int textIdx = trimmed.indexOf("\"text\"");
-            if (textIdx >= 0) {
-                int colonIdx = trimmed.indexOf(':', textIdx);
-                if (colonIdx >= 0) {
-                    int quoteStart = trimmed.indexOf('"', colonIdx + 1);
-                    if (quoteStart >= 0) {
-                        // Find the closing quote, respecting escaped quotes
-                        int quoteEnd = quoteStart + 1;
-                        while (quoteEnd < trimmed.length()) {
-                            char c = trimmed.charAt(quoteEnd);
-                            if (c == '"' && trimmed.charAt(quoteEnd - 1) != '\\') break;
-                            quoteEnd++;
-                        }
-                        String extracted = trimmed.substring(quoteStart + 1, quoteEnd);
-                        // Unescape JSON string: \n → newline, \" → ", \\ → \
-                        return extracted
-                                .replace("\\n", "\n")
-                                .replace("\\r", "\r")
-                                .replace("\\t", "\t")
-                                .replace("\\\"", "\"")
-                                .replace("\\\\", "\\")
-                                .strip();
-                    }
+            try {
+                JsonNode root = objectMapper.readTree(trimmed);
+
+                // Format 1: hertzg/tesseract-server → {"data":{"stdout":"..."}}
+                JsonNode stdout = root.path("data").path("stdout");
+                if (!stdout.isMissingNode() && stdout.isTextual()) {
+                    return stdout.asText().strip();
                 }
+
+                // Format 2: other containers → {"text":"..."}
+                JsonNode text = root.path("text");
+                if (!text.isMissingNode() && text.isTextual()) {
+                    return text.asText().strip();
+                }
+
+                log.debug("JSON response did not contain 'data.stdout' or 'text' keys");
+            } catch (Exception e) {
+                log.debug("Failed to parse Tesseract response as JSON: {}", e.getMessage());
             }
         }
 

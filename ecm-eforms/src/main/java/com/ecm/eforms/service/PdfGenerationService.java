@@ -5,6 +5,12 @@ import com.ecm.eforms.model.schema.FieldType;
 import com.ecm.eforms.model.schema.FormField;
 import com.ecm.eforms.model.schema.FormSchema;
 import com.ecm.eforms.model.schema.FormSection;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -12,13 +18,17 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.springframework.stereotype.Service;
 
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import javax.imageio.ImageIO;
 
 /**
  * PDF Generation Service
@@ -69,7 +79,10 @@ import java.util.Map;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class PdfGenerationService {
+
+    private final ObjectMapper objectMapper;
 
     // ── Layout constants ──────────────────────────────────────────────────────
     private static final float MARGIN        = 50f;
@@ -88,6 +101,8 @@ public class PdfGenerationService {
     private static final float FONT_SIZE_VALUE      = 11f;
     private static final float FONT_SIZE_PARA      = 10f;
     private static final float FONT_SIZE_META      = 9f;
+    private static final float LABEL_COL_WIDTH    = 140f;       // inline label column width
+    private static final float QR_SIZE            = 80f;        // QR code size in points
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -145,15 +160,41 @@ public class PdfGenerationService {
             FormSchema schema = submission.getFormSchemaSnapshot();
             Map<String, Object> data = submission.getSubmissionData();
 
+            boolean inline = schema != null && "inline".equals(schema.getLabelPosition());
+
             if (schema != null && schema.getSections() != null) {
                 for (FormSection section : schema.getSections()) {
-                    renderSection(ctx, section, data, fontBold, fontNormal, fontOblique);
+                    renderSection(ctx, section, data, fontBold, fontNormal, fontOblique, inline);
                 }
             } else {
                 // Fallback: schema snapshot unavailable — dump raw submissionData map
                 log.warn("formSchemaSnapshot is null for submission={} — falling back to raw data dump",
                         submission.getId());
                 renderRawDataFallback(ctx, data, fontBold, fontNormal);
+            }
+
+            // ── QR Code ──────────────────────────────────────────────
+            try {
+                byte[] qrPng = generateQrCode(submission);
+                if (qrPng != null) {
+                    ctx.moveDown(12);
+                    ctx.drawHRule();
+                    ctx.moveDown(6);
+                    // Ensure room for QR + label
+                    if (ctx.getY() < BOTTOM_Y + QR_SIZE + 20) {
+                        ctx.newPage();
+                    }
+                    PDImageXObject qrImage = PDImageXObject.createFromByteArray(doc, qrPng, "qr.png");
+                    // Draw QR at bottom-right of current area
+                    float qrX = PAGE_WIDTH - MARGIN - QR_SIZE;
+                    float qrY = ctx.getY() - QR_SIZE;
+                    ctx.getStream().drawImage(qrImage, qrX, qrY, QR_SIZE, QR_SIZE);
+                    ctx.writeText(fontNormal, FONT_SIZE_META, "ECM Form QR — scan to link this document");
+                    ctx.moveDown(QR_SIZE - FONT_SIZE_META);
+                }
+            } catch (Exception e) {
+                log.warn("QR code generation failed for submission={}: {}", submission.getId(), e.getMessage());
+                // Non-fatal — continue without QR
             }
 
             // ── Signature block ───────────────────────────────────────
@@ -180,12 +221,16 @@ public class PdfGenerationService {
 
     // ── Section renderer ──────────────────────────────────────────────────────
 
+    private static final java.util.Set<FieldType> LAYOUT_ONLY_TYPES =
+            java.util.Set.of(FieldType.SECTION_HEADER, FieldType.PARAGRAPH, FieldType.DIVIDER);
+
     private void renderSection(PageContext ctx,
                                FormSection section,
                                Map<String, Object> data,
                                PDType1Font fontBold,
                                PDType1Font fontNormal,
-                               PDType1Font fontOblique) throws IOException {
+                               PDType1Font fontOblique,
+                               boolean inline) throws IOException {
 
         // Section title (if set and not blank)
         if (section.getTitle() != null && !section.getTitle().isBlank()) {
@@ -198,12 +243,118 @@ public class PdfGenerationService {
 
         if (section.getFields() == null) return;
 
+        // ── Group fields into rows based on colSpan ──────────────────────
+        // Walk the fields list. Accumulate colSpans until they reach or exceed 12.
+        // Layout-only fields (PARAGRAPH, SECTION_HEADER, DIVIDER) always get their
+        // own row at full width — they break any in-progress row.
+        List<List<FormField>> rows = new java.util.ArrayList<>();
+        List<FormField> currentRow = new java.util.ArrayList<>();
+        int currentSpan = 0;
+
         for (FormField field : section.getFields()) {
             if (field.isHidden()) continue;
-            renderField(ctx, field, data, fontBold, fontNormal, fontOblique);
+
+            // Layout-only fields break the row and render full-width
+            if (LAYOUT_ONLY_TYPES.contains(field.getType())) {
+                if (!currentRow.isEmpty()) {
+                    rows.add(currentRow);
+                    currentRow = new java.util.ArrayList<>();
+                    currentSpan = 0;
+                }
+                rows.add(List.of(field)); // single-field row
+                continue;
+            }
+
+            int span = field.getColSpan() != null ? field.getColSpan() : 12;
+
+            // If adding this field exceeds 12 columns, flush current row first
+            if (currentSpan + span > 12 && !currentRow.isEmpty()) {
+                rows.add(currentRow);
+                currentRow = new java.util.ArrayList<>();
+                currentSpan = 0;
+            }
+
+            currentRow.add(field);
+            currentSpan += span;
+
+            // Row full — flush
+            if (currentSpan >= 12) {
+                rows.add(currentRow);
+                currentRow = new java.util.ArrayList<>();
+                currentSpan = 0;
+            }
+        }
+        if (!currentRow.isEmpty()) {
+            rows.add(currentRow);
+        }
+
+        // ── Render rows ──────────────────────────────────────────────────
+        for (List<FormField> row : rows) {
+            if (row.size() == 1) {
+                // Single field (full-width or layout-only)
+                renderField(ctx, row.get(0), data, fontBold, fontNormal, fontOblique,
+                            inline, MARGIN, PRINTABLE_W);
+            } else {
+                // Multi-field row — render side by side
+                renderRow(ctx, row, data, fontBold, fontNormal, fontOblique, inline);
+            }
         }
 
         ctx.moveDown(8); // gap between sections
+    }
+
+    // ── Row renderer (multi-column) ──────────────────────────────────────────
+
+    /**
+     * Renders multiple fields side-by-side in a single row.
+     * Each field's width is proportional to its colSpan out of the total row span.
+     * All fields in the row share the same y-position start; the cursor advances
+     * by the tallest field's height after the row is done.
+     */
+    private void renderRow(PageContext ctx,
+                           List<FormField> fields,
+                           Map<String, Object> data,
+                           PDType1Font fontBold,
+                           PDType1Font fontNormal,
+                           PDType1Font fontOblique,
+                           boolean inline) throws IOException {
+
+        // Calculate total span and proportional widths
+        int totalSpan = fields.stream()
+                .mapToInt(f -> f.getColSpan() != null ? f.getColSpan() : 12)
+                .sum();
+        if (totalSpan == 0) totalSpan = 12;
+
+        float gap = 8f; // gap between columns
+        float totalGaps = gap * (fields.size() - 1);
+        float availableWidth = PRINTABLE_W - totalGaps;
+
+        // Save y before rendering the row
+        float rowStartY = ctx.getY();
+        float lowestY = rowStartY; // track the bottom of the tallest cell
+
+        float xOffset = MARGIN;
+        for (int i = 0; i < fields.size(); i++) {
+            FormField field = fields.get(i);
+            int span = field.getColSpan() != null ? field.getColSpan() : 12;
+            float cellWidth = (availableWidth * span) / totalSpan;
+
+            // Reset y to row start for each field (same row)
+            ctx.setY(rowStartY);
+
+            renderField(ctx, field, data, fontBold, fontNormal, fontOblique,
+                        inline, xOffset, cellWidth);
+
+            // Track the lowest y (tallest cell determines row height)
+            if (ctx.getY() < lowestY) {
+                lowestY = ctx.getY();
+            }
+
+            xOffset += cellWidth + gap;
+        }
+
+        // Set cursor to the bottom of the tallest cell
+        ctx.setY(lowestY);
     }
 
     // ── Field renderer ────────────────────────────────────────────────────────
@@ -213,7 +364,10 @@ public class PdfGenerationService {
                              Map<String, Object> data,
                              PDType1Font fontBold,
                              PDType1Font fontNormal,
-                             PDType1Font fontOblique) throws IOException {
+                             PDType1Font fontOblique,
+                             boolean inline,
+                             float xOffset,
+                             float cellWidth) throws IOException {
 
         FieldType type = field.getType();
         if (type == null) return;
@@ -221,13 +375,11 @@ public class PdfGenerationService {
         switch (type) {
 
             // ── Layout-only: PARAGRAPH ────────────────────────────────
-            // field.label holds the paragraph body text authored in the designer.
-            // It is NEVER in submissionData — render from the schema field directly.
             case PARAGRAPH: {
                 String text = field.getLabel();
                 if (text == null || text.isBlank()) return;
-                // Paragraph text can be long — always word-wrap it
-                ctx.writeWrapped(fontNormal, FONT_SIZE_PARA, safe(text), LINE_HEIGHT_PARA);
+                ctx.writeWrapped(fontNormal, FONT_SIZE_PARA, safe(text), LINE_HEIGHT_PARA,
+                                 xOffset, cellWidth);
                 ctx.moveDown(6);
                 break;
             }
@@ -237,7 +389,7 @@ public class PdfGenerationService {
                 String text = field.getLabel();
                 if (text == null || text.isBlank()) return;
                 ctx.moveDown(4);
-                ctx.writeText(fontBold, FONT_SIZE_HEADING, safe(text));
+                ctx.writeTextAt(fontBold, FONT_SIZE_HEADING, safe(text), xOffset);
                 ctx.moveDown(2);
                 break;
             }
@@ -245,7 +397,7 @@ public class PdfGenerationService {
             // ── Layout-only: DIVIDER ──────────────────────────────────
             case DIVIDER: {
                 ctx.moveDown(4);
-                ctx.drawHRule();
+                ctx.drawHRuleAt(xOffset, cellWidth);
                 ctx.moveDown(4);
                 break;
             }
@@ -256,19 +408,38 @@ public class PdfGenerationService {
                 Object raw   = (data != null) ? data.get(field.getKey()) : null;
                 String value = formatValue(raw);
 
-                // Field label (small, grey-ish via oblique — italic stands out from body)
-                ctx.writeText(fontOblique, FONT_SIZE_LABEL, safe(label));
-                ctx.moveDown(1);
+                if (inline) {
+                    // ── Inline layout: "Label:  value" on same line ───
+                    String safeLabel = safe(label) + ":";
+                    String safeValue = value.isBlank() ? "_______________" : safe(value);
+                    float inlineLabelW = Math.min(LABEL_COL_WIDTH, cellWidth * 0.4f);
 
-                // Field value (larger, normal weight — visually prominent)
-                if (value.isBlank()) {
-                    // No value entered — show a placeholder underline
-                    ctx.writeText(fontNormal, FONT_SIZE_VALUE, "____________________________");
+                    if (!value.isBlank() && value.contains("\n")) {
+                        ctx.writeInlineAt(fontOblique, FONT_SIZE_VALUE, safeLabel,
+                                          fontNormal, FONT_SIZE_VALUE, "",
+                                          inlineLabelW, xOffset);
+                        ctx.writeWrapped(fontNormal, FONT_SIZE_VALUE, safeValue,
+                                         LINE_HEIGHT_NORMAL, xOffset + inlineLabelW,
+                                         cellWidth - inlineLabelW);
+                    } else {
+                        ctx.writeInlineAt(fontOblique, FONT_SIZE_VALUE, safeLabel,
+                                          fontNormal, FONT_SIZE_VALUE, safeValue,
+                                          inlineLabelW, xOffset);
+                    }
+                    ctx.moveDown(4);
                 } else {
-                    // Value may be multi-line (TEXT_AREA) — word-wrap it
-                    ctx.writeWrapped(fontNormal, FONT_SIZE_VALUE, safe(value), LINE_HEIGHT_NORMAL);
+                    // ── Stacked layout: label above value ─────────────
+                    ctx.writeTextAt(fontOblique, FONT_SIZE_LABEL, safe(label), xOffset);
+                    ctx.moveDown(1);
+
+                    if (value.isBlank()) {
+                        ctx.writeTextAt(fontNormal, FONT_SIZE_VALUE, "_______________", xOffset);
+                    } else {
+                        ctx.writeWrapped(fontNormal, FONT_SIZE_VALUE, safe(value),
+                                         LINE_HEIGHT_NORMAL, xOffset, cellWidth);
+                    }
+                    ctx.moveDown(8);
                 }
-                ctx.moveDown(8);
                 break;
             }
         }
@@ -353,6 +524,7 @@ public class PdfGenerationService {
         }
 
         float getY() { return y; }
+        void setY(float newY) { this.y = newY; }
 
         /** Close the current content stream. Must be called before doc.save(). */
         void close() throws IOException {
@@ -391,6 +563,17 @@ public class PdfGenerationService {
             y -= size + 2;   // advance by font size + small gap
         }
 
+        /** Write text at a custom x-offset (for multi-column layout). */
+        void writeTextAt(PDType1Font font, float size, String text, float xOffset) throws IOException {
+            if (y - size < BOTTOM_Y) newPage();
+            cs.beginText();
+            cs.setFont(font, size);
+            cs.newLineAtOffset(xOffset, y);
+            cs.showText(text);
+            cs.endText();
+            y -= size + 2;
+        }
+
         /**
          * Word-wrap {@code text} into lines of at most PRINTABLE_W points,
          * writing each line and auto-page-breaking as needed.
@@ -398,43 +581,10 @@ public class PdfGenerationService {
          * Uses simple word-boundary splitting. PDType1Font.getStringWidth()
          * returns width in 1/1000 pt units — divide by 1000 then multiply by size.
          */
+        /** Word-wrap at full page width starting at MARGIN. */
         void writeWrapped(PDType1Font font, float size, String text, float lineHeight)
                 throws IOException {
-            if (text == null || text.isBlank()) return;
-
-            // Split on \n first (TEXT_AREA may have explicit line breaks)
-            for (String paragraph : text.split("\\r?\\n", -1)) {
-                String[] words = paragraph.split(" ", -1);
-                StringBuilder line = new StringBuilder();
-
-                for (String word : words) {
-                    String candidate = line.length() == 0 ? word : line + " " + word;
-                    float w = font.getStringWidth(candidate) / 1000f * size;
-
-                    if (w > PRINTABLE_W && line.length() > 0) {
-                        // Flush current line and start a new one with this word
-                        writeSingleLine(font, size, line.toString(), lineHeight);
-                        line = new StringBuilder(word);
-                    } else {
-                        line = new StringBuilder(candidate);
-                    }
-                }
-                // Flush remaining words
-                if (line.length() > 0) {
-                    writeSingleLine(font, size, line.toString(), lineHeight);
-                }
-            }
-        }
-
-        private void writeSingleLine(PDType1Font font, float size, String text, float lineHeight)
-                throws IOException {
-            if (y - lineHeight < BOTTOM_Y) newPage();
-            cs.beginText();
-            cs.setFont(font, size);
-            cs.newLineAtOffset(MARGIN, y);
-            cs.showText(text);
-            cs.endText();
-            y -= lineHeight;
+            writeWrapped(font, size, text, lineHeight, MARGIN, PRINTABLE_W);
         }
 
         /**
@@ -449,6 +599,145 @@ public class PdfGenerationService {
             cs.lineTo(PAGE_WIDTH - MARGIN, y);
             cs.stroke();
             y -= 4;
+        }
+
+        /** Draw a horizontal rule at a custom x-offset and width. */
+        void drawHRuleAt(float xOffset, float width) throws IOException {
+            if (y - 4 < BOTTOM_Y) newPage();
+            cs.setLineWidth(0.5f);
+            cs.moveTo(xOffset, y);
+            cs.lineTo(xOffset + width, y);
+            cs.stroke();
+            y -= 4;
+        }
+
+        /**
+         * Write label and value on the same line (inline layout).
+         * Label is left-aligned at MARGIN; value starts after label text + gap.
+         */
+        void writeInline(PDType1Font labelFont, float labelSize, String label,
+                         PDType1Font valueFont, float valueSize, String value,
+                         float labelWidth) throws IOException {
+            writeInlineAt(labelFont, labelSize, label, valueFont, valueSize, value,
+                          labelWidth, MARGIN);
+        }
+
+        /**
+         * Write inline label+value at a custom x-offset (for multi-column layout).
+         * Label is left-aligned at xOffset. Value starts after label's actual
+         * text width + 6pt gap — so short labels leave more room for values.
+         */
+        void writeInlineAt(PDType1Font labelFont, float labelSize, String label,
+                           PDType1Font valueFont, float valueSize, String value,
+                           float labelWidth, float xOffset) throws IOException {
+            float lineH = Math.max(labelSize, valueSize) + 4;
+            if (y - lineH < BOTTOM_Y) newPage();
+
+            float gap = 6f;
+
+            // Label — left-aligned at xOffset
+            float labelTextW = labelFont.getStringWidth(label) / 1000f * labelSize;
+            cs.beginText();
+            cs.setFont(labelFont, labelSize);
+            cs.newLineAtOffset(xOffset, y);
+            cs.showText(label);
+            cs.endText();
+
+            // Value — starts after label text + gap, left-aligned
+            if (value != null && !value.isEmpty()) {
+                float valueX = xOffset + labelTextW + gap;
+                cs.beginText();
+                cs.setFont(valueFont, valueSize);
+                cs.newLineAtOffset(valueX, y);
+                cs.showText(value);
+                cs.endText();
+            }
+
+            y -= lineH;
+        }
+
+        /**
+         * Word-wrap with custom x-offset and max width (used for multi-column + inline layout).
+         */
+        void writeWrapped(PDType1Font font, float size, String text, float lineHeight,
+                          float xOffset, float maxWidth) throws IOException {
+            if (text == null || text.isBlank()) return;
+
+            for (String paragraph : text.split("\\r?\\n", -1)) {
+                String[] words = paragraph.split(" ", -1);
+                StringBuilder line = new StringBuilder();
+
+                for (String word : words) {
+                    String candidate = line.length() == 0 ? word : line + " " + word;
+                    float w = font.getStringWidth(candidate) / 1000f * size;
+
+                    if (w > maxWidth && line.length() > 0) {
+                        writeSingleLineAt(font, size, line.toString(), lineHeight, xOffset);
+                        line = new StringBuilder(word);
+                    } else {
+                        line = new StringBuilder(candidate);
+                    }
+                }
+                if (line.length() > 0) {
+                    writeSingleLineAt(font, size, line.toString(), lineHeight, xOffset);
+                }
+            }
+        }
+
+        private void writeSingleLineAt(PDType1Font font, float size, String text,
+                                        float lineHeight, float xOffset) throws IOException {
+            if (y - lineHeight < BOTTOM_Y) newPage();
+            cs.beginText();
+            cs.setFont(font, size);
+            cs.newLineAtOffset(xOffset, y);
+            cs.showText(text);
+            cs.endText();
+            y -= lineHeight;
+        }
+
+        /** Expose content stream for image drawing (QR code). */
+        PDPageContentStream getStream() { return cs; }
+    }
+
+    // ── QR Code generation ────────────────────────────────────────────────────
+
+    /**
+     * Generates a QR code PNG containing form context metadata.
+     * Payload is compact JSON:
+     *   ecm  — marker (always true)
+     *   fk   — formKey
+     *   v    — form version
+     *   fd   — formDefinitionId
+     *   sid  — submissionId (null for blank prints)
+     *   cid  — caseId (if case context exists)
+     *   pid  — partyExternalId (customer)
+     */
+    private byte[] generateQrCode(FormSubmission submission) {
+        try {
+            Map<String, Object> qrPayload = new LinkedHashMap<>();
+            qrPayload.put("ecm", true);
+            qrPayload.put("fk", submission.getFormKey());
+            qrPayload.put("v", submission.getFormVersion());
+            if (submission.getFormDefinition() != null) {
+                qrPayload.put("fd", submission.getFormDefinition().getId().toString());
+            }
+            qrPayload.put("sid", submission.getId().toString());
+            if (submission.getPartyExternalId() != null) {
+                qrPayload.put("pid", submission.getPartyExternalId());
+            }
+
+            String json = objectMapper.writeValueAsString(qrPayload);
+
+            QRCodeWriter writer = new QRCodeWriter();
+            BitMatrix matrix = writer.encode(json, BarcodeFormat.QR_CODE, 200, 200);
+            BufferedImage image = MatrixToImageWriter.toBufferedImage(matrix);
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(image, "PNG", baos);
+            return baos.toByteArray();
+        } catch (Exception e) {
+            log.warn("Failed to generate QR code: {}", e.getMessage());
+            return null;
         }
     }
 

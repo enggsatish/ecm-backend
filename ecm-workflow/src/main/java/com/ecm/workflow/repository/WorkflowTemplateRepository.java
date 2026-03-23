@@ -15,4 +15,7 @@ public interface WorkflowTemplateRepository extends JpaRepository<WorkflowTempla
     List<WorkflowTemplate> findAllPublished();
 
     Optional<WorkflowTemplate> findByProcessKeyAndStatus(String s, WorkflowTemplate.Status status);
+
+    @Query("SELECT t FROM WorkflowTemplate t WHERE t.status = 'PUBLISHED' AND t.flowableDeploymentId IS NULL AND t.bpmnXml IS NOT NULL")
+    List<WorkflowTemplate> findPublishedButNotDeployed();
 }

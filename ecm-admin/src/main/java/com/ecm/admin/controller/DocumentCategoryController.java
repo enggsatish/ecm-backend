@@ -19,20 +19,20 @@ public class DocumentCategoryController {
     public DocumentCategoryController(DocumentCategoryService service) { this.service = service; }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE', 'ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'documents:read')")
     public ResponseEntity<ApiResponse<List<CategoryDto>>> list(
             @RequestParam(defaultValue = "false") boolean flat) {
         return ResponseEntity.ok(ApiResponse.ok(flat ? service.listFlat() : service.listTree()));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'documents:write')")
     public ResponseEntity<ApiResponse<CategoryDto>> getById(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(service.getById(id)));
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'documents:write')")
     public ResponseEntity<ApiResponse<CategoryDto>> create(
             @Valid @RequestBody CategoryDto.Request req) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -40,14 +40,14 @@ public class DocumentCategoryController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'documents:write')")
     public ResponseEntity<ApiResponse<CategoryDto>> update(
             @PathVariable Integer id, @Valid @RequestBody CategoryDto.Request req) {
         return ResponseEntity.ok(ApiResponse.ok(service.update(id, req), "Category updated"));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'documents:write')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Integer id) {
         service.deactivate(id);
         return ResponseEntity.ok(ApiResponse.ok(null, "Category deactivated"));

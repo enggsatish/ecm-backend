@@ -26,7 +26,7 @@ public class ProductController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:VIEW')")
     public ResponseEntity<ApiResponse<Page<ProductDto>>> list(
             @RequestParam(required = false) Boolean isActive,
             @RequestParam(defaultValue = "0") int page,
@@ -35,13 +35,13 @@ public class ProductController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN', 'ECM_BACKOFFICE')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:VIEW')")
     public ResponseEntity<ApiResponse<ProductDto>> getById(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(service.getById(id)));
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     public ResponseEntity<ApiResponse<ProductDto>> create(
             @Valid @RequestBody ProductDto.Request req) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -49,14 +49,14 @@ public class ProductController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     public ResponseEntity<ApiResponse<ProductDto>> update(
             @PathVariable Integer id, @Valid @RequestBody ProductDto.Request req) {
         return ResponseEntity.ok(ApiResponse.ok(service.update(id, req), "Product updated"));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Integer id) {
         service.deactivate(id);
         return ResponseEntity.ok(ApiResponse.ok(null, "Product deactivated"));
@@ -65,7 +65,7 @@ public class ProductController {
     // ── Document Types ──────────────────────────────────────────────────────
 
     @PostMapping("/{id}/document-types")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     public ResponseEntity<ApiResponse<ProductDto>> addDocumentType(
             @PathVariable Integer id,
             @RequestBody ProductDto.DocumentTypeRequest req) {
@@ -74,7 +74,7 @@ public class ProductController {
     }
 
     @DeleteMapping("/{id}/document-types/{docTypeId}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     public ResponseEntity<ApiResponse<Void>> removeDocumentType(
             @PathVariable Integer id, @PathVariable Integer docTypeId) {
         service.removeDocumentType(id, docTypeId);
@@ -83,7 +83,7 @@ public class ProductController {
 
     /** Proxy to ecm-workflow — returns available workflow definitions for admin dropdowns */
     @GetMapping("/workflow-definitions")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     public ResponseEntity<ApiResponse<List<WorkflowClient.WorkflowDefinitionSummary>>> getWorkflowDefs() {
         return ResponseEntity.ok(ApiResponse.ok(workflowClient.getDefinitions()));
     }

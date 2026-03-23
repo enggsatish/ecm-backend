@@ -65,6 +65,50 @@ public class WorkflowClient {
         return null;
     }
 
+    /**
+     * Starts a workflow instance via ecm-workflow REST API.
+     * Returns the process instance ID, or null on failure.
+     */
+    @SuppressWarnings("unchecked")
+    public StartWorkflowResult startWorkflow(String documentId, String documentName,
+                                              Integer workflowDefinitionId, Integer categoryId,
+                                              String startedBy) {
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("documentId", documentId);
+            body.put("documentName", documentName != null ? documentName : "");
+            body.put("workflowDefinitionId", workflowDefinitionId);
+            if (categoryId != null) body.put("categoryId", categoryId);
+
+            Map<?, ?> response = restClient.post()
+                    .uri("/api/workflow/instances/internal-start?startedBy={startedBy}",
+                         startedBy != null ? startedBy : "system")
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (response == null || !Boolean.TRUE.equals(response.get("success"))) {
+                log.warn("Workflow start returned non-success: {}", response);
+                return null;
+            }
+
+            Object data = response.get("data");
+            if (data instanceof Map<?, ?> m) {
+                return new StartWorkflowResult(
+                        String.valueOf(m.get("processInstanceId")),
+                        String.valueOf(m.get("id")),
+                        String.valueOf(m.get("status"))
+                );
+            }
+            return null;
+        } catch (RestClientException e) {
+            log.error("Failed to start workflow via ecm-workflow: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    public record StartWorkflowResult(String processInstanceId, String instanceRecordId, String status) {}
+
     public static class WorkflowDefinitionSummary {
         private Integer id;
         private String name;

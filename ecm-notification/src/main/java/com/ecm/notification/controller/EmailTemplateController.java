@@ -24,19 +24,19 @@ public class EmailTemplateController {
     private final EmailTemplateService templateService;
 
     @GetMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<List<EmailTemplateDto>>> list() {
         return ResponseEntity.ok(ApiResponse.ok(templateService.listAll()));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<EmailTemplateDto>> getById(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(templateService.getById(id)));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<Void>> update(
             @PathVariable Integer id,
             @RequestBody UpdateTemplateRequest req) {

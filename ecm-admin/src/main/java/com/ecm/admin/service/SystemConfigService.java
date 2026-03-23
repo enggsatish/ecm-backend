@@ -51,6 +51,18 @@ public class SystemConfigService {
         }).collect(Collectors.toList());
     }
 
+    /** Reset all config values to their default_value */
+    public List<TenantConfigDto> resetToDefaults() {
+        List<TenantConfig> all = repo.findAll();
+        for (TenantConfig tc : all) {
+            if (tc.getDefaultValue() != null) {
+                tc.setValue(tc.getDefaultValue());
+                tc.setUpdatedAt(OffsetDateTime.now());
+            }
+        }
+        return repo.saveAll(all).stream().map(TenantConfigDto::from).collect(Collectors.toList());
+    }
+
     private TenantConfig findOrThrow(String key) {
         return repo.findById(key).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Config key not found: " + key));

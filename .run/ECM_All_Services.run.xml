@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="ECM All Services" type="CompoundRunConfigurationType">
+    <toRun name="1_EcmIdentity" type="SpringBootApplicationConfigurationType" />
+    <toRun name="2_EcmAdmin" type="SpringBootApplicationConfigurationType" />
+    <toRun name="3_EcmDocument" type="SpringBootApplicationConfigurationType" />
+    <toRun name="4_EcmOcr" type="SpringBootApplicationConfigurationType" />
+    <toRun name="5_EcmWorkflow" type="SpringBootApplicationConfigurationType" />
+    <toRun name="6_EcmEForms" type="SpringBootApplicationConfigurationType" />
+    <toRun name="7_EcmGateway" type="SpringBootApplicationConfigurationType" />
+    <toRun name="8_EcmNotification" type="SpringBootApplicationConfigurationType" />
+    <method v="2" />
+  </configuration>
+</component>

@@ -2,6 +2,11 @@ spring:
   application:
     name: ecm-admin
 
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
   datasource:
     url: jdbc:postgresql://localhost:5432/ecmdb
     username: ecmuser
@@ -41,6 +46,15 @@ spring:
     username: ecmrabbit
     password: ecmrabbitpassword
     virtual-host: ecm
+    listener:
+      simple:
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000
+          multiplier: 2.0
+          max-interval: 10000
 
   security:
     oauth2:

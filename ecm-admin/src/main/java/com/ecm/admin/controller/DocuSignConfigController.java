@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/admin/integrations/docusign")
 @RequiredArgsConstructor
-@PreAuthorize("hasRole('ECM_ADMIN')")
+@PreAuthorize("hasPermission(null, 'admin:configure')")
 public class DocuSignConfigController {
 
     private static final String TENANT = "default";

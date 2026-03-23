@@ -1,5 +1,6 @@
 package com.ecm.gateway.filter;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -57,23 +58,63 @@ import reactor.core.publisher.Mono;
 @Component
 public class SecurityHeadersFilter implements GlobalFilter, Ordered {
 
+    @Value("${OKTA_ISSUER_URI:https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697}")
+    private String oktaIssuerUri;
+
+    /**
+     * Extracts the origin (scheme + host) from the Okta issuer URI.
+     * e.g. "https://integrator-3023444.okta.com/oauth2/xxx" → "https://integrator-3023444.okta.com"
+     */
+    private String getOktaOrigin() {
+        try {
+            java.net.URI uri = java.net.URI.create(oktaIssuerUri);
+            return uri.getScheme() + "://" + uri.getHost();
+        } catch (Exception e) {
+            return "https://*.okta.com";
+        }
+    }
+
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        // Register a beforeCommit callback — fires just before headers are written
-        // to the wire, while they are still mutable. Safe for all response types
-        // including streaming uploads, downloads, and error responses.
         exchange.getResponse().beforeCommit(() -> {
             HttpHeaders headers = exchange.getResponse().getHeaders();
 
-            // Only set if not already present — allows downstream services to
-            // override a specific header for a specific route if ever needed.
+            String oktaOrigin = getOktaOrigin();
+
             headers.set("X-Content-Type-Options",   "nosniff");
-            headers.set("X-Frame-Options",           "DENY");
+            // X-Frame-Options: allow Okta iframe for silent token renewal,
+            // block all others. CSP frame-ancestors provides the real protection.
+            headers.set("X-Frame-Options",           "SAMEORIGIN");
             headers.set("X-XSS-Protection",         "0");
             headers.set("Referrer-Policy",           "strict-origin-when-cross-origin");
             headers.set("Permissions-Policy",        "camera=(), microphone=(), geolocation=()");
             headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
             headers.set("Cache-Control",             "no-store");
+
+            // ── Content Security Policy ──────────────────────────────────
+            // Protects against XSS by whitelisting allowed content sources.
+            //
+            // Key decisions:
+            //   script-src 'self' — blocks inline scripts and external script injection
+            //   style-src 'self' 'unsafe-inline' — Tailwind CSS uses inline styles
+            //   connect-src 'self' + Okta — API calls + token renewal endpoint
+            //   frame-src + Okta — hidden iframe for silent token renewal
+            //   img-src 'self' data: blob: — inline SVGs, base64 images, MinIO blobs
+            //   frame-ancestors 'self' — prevents clickjacking (replaces X-Frame-Options)
+            String csp = String.join("; ",
+                    "default-src 'self'",
+                    "script-src 'self'",
+                    "style-src 'self' 'unsafe-inline'",
+                    "img-src 'self' data: blob:",
+                    "font-src 'self' data:",
+                    "connect-src 'self' " + oktaOrigin,
+                    "frame-src 'self' " + oktaOrigin,
+                    "frame-ancestors 'self'",
+                    "base-uri 'self'",
+                    "form-action 'self' " + oktaOrigin,
+                    "object-src 'none'"
+            );
+            headers.set("Content-Security-Policy", csp);
 
             return Mono.empty();
         });

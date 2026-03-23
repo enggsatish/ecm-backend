@@ -5,7 +5,6 @@ import com.ecm.identity.model.dto.EnrichmentResponseDto;
 import com.ecm.identity.model.entity.Role;
 import com.ecm.identity.model.entity.User;
 import com.ecm.identity.repository.PermissionRepository;
-import com.ecm.identity.repository.RoleRepository;
 import com.ecm.identity.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,18 +29,16 @@ import java.util.stream.Collectors;
  *
  * Called by InternalAuthController from ecm-gateway on cache miss.
  *
- * ── Bootstrap / First-run handling ───────────────────────────────────────────
- * On a fresh database no users exist.  Without a bootstrap mechanism this is a
- * deadlock: no users → NO_ACCESS → can't log in → can't create users.
+ * ── No auto-provisioning ────────────────────────────────────────────────────
+ * Users are NOT auto-created on login. SUPER_ADMIN must add users via Admin UI.
+ * SUPER_ADMIN role is seeded via SQL after first Okta login creates the user
+ * record in IdentityService.syncUserFromToken().
  *
- * Fix: if the sub is unknown AND the JWT groups claim contains 'ECM_ADMIN',
- * the user is auto-provisioned with the ECM_ADMIN system role.
- * This runs exactly ONCE per user sub — subsequent logins hit the Redis cache.
- *
- * This is intentionally narrow:
- *   - Only fires when the sub doesn't already exist in the DB
- *   - Only grants ECM_ADMIN (not any other role)
- *   - Does not fire for ECM_GROUP members (they need explicit admin invitation)
+ * Flow for first-run:
+ *   1. Run init.sql (seeds roles, permissions, config)
+ *   2. Login via Okta → syncUserFromToken creates user with NO roles
+ *   3. Run SQL: INSERT INTO ecm_core.user_roles ... (assign SUPER_ADMIN)
+ *   4. SUPER_ADMIN can now add other users via Admin UI
  */
 @Slf4j
 @Service
@@ -51,14 +48,7 @@ public class EnrichmentService {
     private static final String   CACHE_KEY_PREFIX = "ecm:user:enrich:";
     private static final Duration CACHE_TTL        = Duration.ofMinutes(15);
 
-    /** Okta group name that triggers bootstrap auto-provisioning */
-    private static final String OKTA_ADMIN_GROUP = "ECM_ADMIN";
-
-    /** ECM role name assigned during bootstrap */
-    private static final String ECM_ADMIN_ROLE = "ECM_ADMIN";
-
     private final UserRepository       userRepository;
-    private final RoleRepository       roleRepository;
     private final PermissionRepository permissionRepository;
     private final StringRedisTemplate  redis;
     private final ObjectMapper         objectMapper;
@@ -120,19 +110,21 @@ public class EnrichmentService {
             }
         }
 
-        // 4. Bootstrap: auto-provision first ECM_ADMIN on fresh database
+        // Unknown user — create a bare record (no roles) so SUPER_ADMIN can see
+        // them in the Users list and assign roles. Returns NO_ACCESS.
         if (userOpt.isEmpty()) {
-            boolean isOktaAdmin = oktaGroups != null && oktaGroups.contains(OKTA_ADMIN_GROUP);
-            if (isOktaAdmin) {
-                log.warn("BOOTSTRAP: No user record found for sub={} but JWT contains {} group. " +
-                        "Auto-provisioning system admin account. " +
-                        "This should only happen on first run or after a DB wipe.", sub, OKTA_ADMIN_GROUP);
-                userOpt = Optional.of(bootstrapAdminUser(sub, email));
-            }
-        }
+            log.info("Unknown user first contact: sub={}, email={}. " +
+                    "Creating user record with no roles. SUPER_ADMIN must assign access.", sub, email);
 
-        if (userOpt.isEmpty()) {
-            log.info("Enrichment: no active user for sub={} email={}, returning NO_ACCESS", sub, email);
+            User newUser = new User();
+            newUser.setEntraObjectId(sub);
+            newUser.setEmail(email != null ? email : sub);
+            newUser.setDisplayName(email != null ? email.split("@")[0] : sub);
+            newUser.setIsActive(true);
+            newUser.setLastLogin(OffsetDateTime.now());
+            newUser.setRoles(new HashSet<>());
+            userRepository.save(newUser);
+
             return EnrichmentResponseDto.noAccess();
         }
 
@@ -181,38 +173,6 @@ public class EnrichmentService {
     @Transactional
     public EnrichmentResponseDto enrich(String sub, String email) {
         return enrich(sub, email, Collections.emptyList());
-    }
-
-    // ── Bootstrap helper ─────────────────────────────────────────────────────
-
-    /**
-     * Creates a new active ECM_ADMIN user from Okta identity claims.
-     *
-     * Only called when:
-     *   a) No user row exists for this sub
-     *   b) The JWT contains the ECM_ADMIN Okta group
-     *
-     * The user is created active (no pending state needed — Okta group membership
-     * is sufficient proof of identity for the bootstrap case).
-     */
-    private User bootstrapAdminUser(String sub, String email) {
-        // Find or create the ECM_ADMIN role
-        Role adminRole = roleRepository.findByName(ECM_ADMIN_ROLE)
-                .orElseThrow(() -> new IllegalStateException(
-                        "ECM_ADMIN role not found in ecm_core.roles — " +
-                                "was the init.sql seed applied? Run: SELECT * FROM ecm_core.roles;"));
-
-        User user = new User();
-        user.setEntraObjectId(sub);
-        user.setEmail(email != null ? email : sub);
-        user.setDisplayName("ECM Administrator");
-        user.setIsActive(true);
-        user.setLastLogin(OffsetDateTime.now());
-        user.setRoles(Set.of(adminRole));
-
-        User saved = userRepository.save(user);
-        log.info("Bootstrap complete: created admin user id={} for sub={}", saved.getId(), sub);
-        return saved;
     }
 
     // ── Cache invalidation helpers ───────────────────────────────────────────

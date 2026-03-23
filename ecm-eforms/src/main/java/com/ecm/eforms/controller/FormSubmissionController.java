@@ -76,7 +76,7 @@ public class FormSubmissionController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_BACKOFFICE','ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'eforms:review')")
     public ResponseEntity<ApiResponse<Page<FormSubmissionSummary>>> listAll(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String formKey,

@@ -25,20 +25,20 @@ public class DepartmentController {
      * ?flat=true           → flat list for dropdowns
      */
     @GetMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     public ResponseEntity<ApiResponse<List<DepartmentDto>>> list(
             @RequestParam(defaultValue = "false") boolean flat) {
         return ResponseEntity.ok(ApiResponse.ok(flat ? service.listFlat() : service.listTree()));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     public ResponseEntity<ApiResponse<DepartmentDto>> getById(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(service.getById(id)));
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     public ResponseEntity<ApiResponse<DepartmentDto>> create(
             @Valid @RequestBody DepartmentRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -46,14 +46,14 @@ public class DepartmentController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     public ResponseEntity<ApiResponse<DepartmentDto>> update(
             @PathVariable Integer id, @Valid @RequestBody DepartmentRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(service.update(id, req), "Department updated"));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Integer id) {
         service.deactivate(id);
         return ResponseEntity.ok(ApiResponse.ok(null, "Department deactivated"));

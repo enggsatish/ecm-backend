@@ -184,6 +184,7 @@ public class PartyService {
     public List<PartyDto.EnrollmentDto> getEnrollments(UUID partyId) {
         return jdbc.query("""
                 SELECT e.id, e.product_line_id, e.product_id, e.is_active, e.enrolled_at,
+                       e.status, e.case_id,
                        pl.name AS pl_name, pl.code AS pl_code,
                        p.display_name AS p_name, p.product_code AS p_code
                 FROM ecm_core.party_product_enrollments e
@@ -200,6 +201,8 @@ public class PartyService {
                         rs.getObject("product_id") != null ? rs.getInt("product_id") : null,
                         rs.getString("p_name"),
                         rs.getString("p_code"),
+                        rs.getString("status"),
+                        rs.getObject("case_id") != null ? java.util.UUID.fromString(rs.getString("case_id")) : null,
                         rs.getBoolean("is_active"),
                         rs.getObject("enrolled_at", OffsetDateTime.class)
                 ),
@@ -246,5 +249,94 @@ public class PartyService {
     public PartyDto getByIdWithEnrollments(UUID id) {
         PartyDto dto = getById(id);
         return dto.withEnrollments(getEnrollments(id));
+    }
+
+    /** Get customer portfolio — customer info + all cases with their documents */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getPortfolio(UUID partyId) {
+        PartyDto customer = getByIdWithEnrollments(partyId);
+
+        // Get all cases for this customer
+        List<Map<String, Object>> cases = jdbc.queryForList("""
+            SELECT c.id, c.external_ref, c.case_type, c.status, c.product_id,
+                   c.opened_at, c.completed_at,
+                   pr.display_name AS product_name, pr.product_code,
+                   s.name AS segment_name, pl.name AS product_line_name
+            FROM ecm_core.cases c
+            LEFT JOIN ecm_admin.products pr ON pr.id = c.product_id
+            LEFT JOIN ecm_admin.segments s ON s.id = pr.segment_id
+            LEFT JOIN ecm_admin.product_lines pl ON pl.id = pr.product_line_id
+            WHERE c.party_id = ?
+            ORDER BY c.created_at DESC
+            """, partyId);
+
+        // For each case, get its documents
+        List<Map<String, Object>> casePortfolios = new java.util.ArrayList<>();
+        for (Map<String, Object> caseRow : cases) {
+            UUID caseId = (UUID) caseRow.get("id");
+
+            List<Map<String, Object>> documents = jdbc.queryForList("""
+                SELECT cd.id AS checklist_item_id, cd.status, cd.is_verified,
+                       cd.uploaded_by, cd.uploaded_at, cd.verified_by, cd.verified_at,
+                       pdt.name AS document_type_name, pdt.code AS document_type_code,
+                       pdt.is_required, pdt.source_type,
+                       d.id AS document_id, d.name AS document_name,
+                       d.original_filename, d.mime_type, d.file_size_bytes,
+                       d.created_at AS doc_created_at
+                FROM ecm_core.case_documents cd
+                JOIN ecm_admin.product_document_types pdt ON pdt.id = cd.product_document_type_id
+                LEFT JOIN ecm_core.documents d ON d.id = cd.document_id
+                WHERE cd.case_id = ?
+                ORDER BY pdt.sort_order, pdt.id
+                """, caseId);
+
+            // Get external uploads for this case
+            List<Map<String, Object>> externalUploads = jdbc.queryForList("""
+                SELECT eu.id, eu.original_filename, eu.file_size_bytes, eu.description,
+                       eu.uploaded_at, eu.document_id,
+                       ep.name AS participant_name, ep.role AS participant_role
+                FROM ecm_core.external_uploads eu
+                JOIN ecm_core.external_participants ep ON ep.id = eu.participant_id
+                WHERE eu.case_id = ?
+                ORDER BY eu.uploaded_at DESC
+                """, caseId);
+
+            Map<String, Object> portfolio = new java.util.LinkedHashMap<>();
+            portfolio.put("caseId", caseId);
+            portfolio.put("externalRef", caseRow.get("external_ref"));
+            portfolio.put("caseType", caseRow.get("case_type"));
+            portfolio.put("status", caseRow.get("status"));
+            portfolio.put("productName", caseRow.get("product_name"));
+            portfolio.put("productCode", caseRow.get("product_code"));
+            portfolio.put("segmentName", caseRow.get("segment_name"));
+            portfolio.put("productLineName", caseRow.get("product_line_name"));
+            portfolio.put("openedAt", caseRow.get("opened_at"));
+            portfolio.put("completedAt", caseRow.get("completed_at"));
+            portfolio.put("documents", documents);
+            portfolio.put("externalUploads", externalUploads);
+            casePortfolios.add(portfolio);
+        }
+
+        // Get uncategorized documents (linked to customer but not to any case)
+        List<Map<String, Object>> uncategorized = jdbc.queryForList("""
+            SELECT d.id AS document_id, d.name, d.original_filename, d.mime_type,
+                   d.file_size_bytes, d.status, d.uploaded_by_email, d.created_at,
+                   dc.name AS category_name
+            FROM ecm_core.documents d
+            LEFT JOIN ecm_admin.document_categories dc ON dc.id = d.category_id
+            WHERE d.party_external_id = (SELECT external_id FROM ecm_core.parties WHERE id = ?)
+              AND d.id NOT IN (
+                  SELECT cd.document_id FROM ecm_core.case_documents cd
+                  WHERE cd.document_id IS NOT NULL
+                    AND cd.case_id IN (SELECT id FROM ecm_core.cases WHERE party_id = ?)
+              )
+            ORDER BY d.created_at DESC
+            """, partyId, partyId);
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("customer", customer);
+        result.put("cases", casePortfolios);
+        result.put("uncategorizedDocuments", uncategorized);
+        return result;
     }
 }

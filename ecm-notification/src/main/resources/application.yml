@@ -36,6 +36,15 @@ spring:
     username: ecmrabbit
     password: ecmrabbitpassword
     virtual-host: ecm
+    listener:
+      simple:
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000
+          multiplier: 2.0
+          max-interval: 10000
 
   # ── Email (Spring Mail) ─────────────────────────────────────────────────────
   # Dev: Mailpit (localhost:1025, no auth, no TLS)

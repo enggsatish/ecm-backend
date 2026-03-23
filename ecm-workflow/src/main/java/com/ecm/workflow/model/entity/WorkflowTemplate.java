@@ -8,6 +8,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Entity
 @Table(schema = "ecm_workflow", name = "workflow_templates")
@@ -87,6 +88,10 @@ public class WorkflowTemplate {
 
     @Column(name = "flowable_process_def_id", length = 200)
     private String flowableProcessDefId;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "tags", columnDefinition = "TEXT[]")
+    private List<String> tags;
 
     @Column(name = "created_by", length = 200)
     private String createdBy;

@@ -7,6 +7,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Component;
 
 import java.io.Serializable;
+import java.util.Set;
 
 /**
  * Spring Security PermissionEvaluator for ECM fine-grained permissions.
@@ -50,9 +51,27 @@ public class EcmPermissionEvaluator implements PermissionEvaluator {
 
         String requiredAuthority = "PERMISSION_" + permission;
 
-        boolean granted = authentication.getAuthorities().stream()
+        Set<String> authorities = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
-                .anyMatch(requiredAuthority::equals);
+                .collect(java.util.stream.Collectors.toSet());
+
+        boolean granted = authorities.contains(requiredAuthority);
+
+        // Fallback: if no PERMISSION_* authorities exist at all (local dev without gateway),
+        // grant all permissions to ADMIN and SUPER_ADMIN roles.
+        if (!granted) {
+            boolean hasAnyPermission = authorities.stream()
+                    .anyMatch(a -> a.startsWith("PERMISSION_"));
+            if (!hasAnyPermission) {
+                boolean isAdmin = authorities.contains("ROLE_ECM_ADMIN")
+                               || authorities.contains("ROLE_ECM_SUPER_ADMIN");
+                if (isAdmin) {
+                    log.debug("Permission fallback: no permissions in context, granting {} to admin user={}",
+                              permission, authentication.getName());
+                    return true;
+                }
+            }
+        }
 
         if (!granted) {
             log.debug("Permission denied: required={}, user={}",

@@ -25,7 +25,7 @@ import java.util.*;
 @Slf4j
 @RestController
 @RequestMapping("/api/admin/audit")
-@PreAuthorize("hasRole('ECM_ADMIN')")
+@PreAuthorize("hasPermission(null, 'admin:audit')")
 @RequiredArgsConstructor
 public class AuditLogController {
 

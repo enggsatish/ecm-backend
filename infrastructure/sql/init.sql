@@ -194,6 +194,8 @@ CREATE TABLE ecm_core.party_product_enrollments (
     party_id        UUID        NOT NULL REFERENCES ecm_core.parties(id) ON DELETE CASCADE,
     product_line_id INTEGER     NOT NULL,   -- soft ref → ecm_admin.product_lines.id
     product_id      INTEGER,                -- soft ref → ecm_admin.products.id (optional)
+    case_id         UUID,                   -- soft ref → ecm_core.cases.id
+    status          VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE | PENDING | REJECTED | CANCELLED
     enrolled_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     enrolled_by     VARCHAR(255) NOT NULL,
     is_active       BOOLEAN     NOT NULL DEFAULT TRUE,
@@ -202,6 +204,8 @@ CREATE TABLE ecm_core.party_product_enrollments (
 CREATE INDEX idx_ppe_party        ON ecm_core.party_product_enrollments(party_id);
 CREATE INDEX idx_ppe_product_line ON ecm_core.party_product_enrollments(product_line_id);
 CREATE INDEX idx_ppe_active       ON ecm_core.party_product_enrollments(is_active);
+CREATE INDEX idx_ppe_case         ON ecm_core.party_product_enrollments(case_id);
+CREATE INDEX idx_ppe_status       ON ecm_core.party_product_enrollments(status);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Documents
@@ -251,10 +255,11 @@ CREATE INDEX idx_core_docs_party_ext    ON ecm_core.documents(party_external_id)
 --
 -- Groups all documents and workflows for a single business process.
 -- Created by: ECM user, LOS via API, or Customer via online banking.
--- Status lifecycle:
---   OPEN → DOCUMENTS_PENDING → UNDER_REVIEW → WITH_EXTERNAL
---     → PENDING_APPROVAL → APPROVED → FUNDING → COMPLETED
+-- Status lifecycle (lobby model):
+--   NEW → IN_PROGRESS → REVIEW_PENDING → UNDER_REVIEW
+--     → PENDING_APPROVAL → APPROVED → COMPLETED
 --   (also: REJECTED, CANCELLED, ON_HOLD at any point)
+--   returned_from_review flag set when reviewer sends case back to IN_PROGRESS
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE ecm_core.cases (
     id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -262,9 +267,14 @@ CREATE TABLE ecm_core.cases (
     party_id            UUID          REFERENCES ecm_core.parties(id) ON DELETE SET NULL,
     product_id          INTEGER,                          -- soft ref → ecm_admin.products.id
     case_type           VARCHAR(50),                      -- LOAN_ORIGINATION, ACCOUNT_OPENING, etc.
-    status              VARCHAR(50)   NOT NULL DEFAULT 'OPEN',
-    assigned_to         VARCHAR(255),                     -- primary FA/case owner (Okta subject)
+    status              VARCHAR(50)   NOT NULL DEFAULT 'NEW',
+    returned_from_review BOOLEAN      NOT NULL DEFAULT FALSE,
+    assigned_to         VARCHAR(255),                     -- assigned person (email or Okta subject)
     assigned_to_name    VARCHAR(255),
+    assigned_to_group   VARCHAR(100),                     -- assigned group (role name, e.g. ECM_REVIEWER)
+    claimed_by          VARCHAR(255),                     -- who claimed from group queue
+    claimed_by_name     VARCHAR(255),
+    claimed_at          TIMESTAMPTZ,
     source_system       VARCHAR(50)   NOT NULL DEFAULT 'ECM',  -- ECM | LOS | ONLINE_BANKING | CRM
     source_ref          VARCHAR(200),                     -- originating system's internal reference
     process_instance_id VARCHAR(200),                     -- Flowable process instance driving this case
@@ -278,6 +288,7 @@ CREATE INDEX idx_case_party       ON ecm_core.cases(party_id);
 CREATE INDEX idx_case_product     ON ecm_core.cases(product_id);
 CREATE INDEX idx_case_status      ON ecm_core.cases(status);
 CREATE INDEX idx_case_assigned    ON ecm_core.cases(assigned_to);
+CREATE INDEX idx_case_group      ON ecm_core.cases(assigned_to_group);
 CREATE INDEX idx_case_source      ON ecm_core.cases(source_system);
 CREATE INDEX idx_case_external    ON ecm_core.cases(external_ref);
 CREATE INDEX idx_case_created     ON ecm_core.cases(created_at DESC);
@@ -302,12 +313,64 @@ CREATE TABLE ecm_core.case_documents (
     review_notes             TEXT,
     waived_by                VARCHAR(255),
     waived_reason            TEXT,
+    -- workflow tracking (populated when a document workflow starts)
+    workflow_instance_id     VARCHAR(200),  -- Flowable process instance ID
+    workflow_status          VARCHAR(30),   -- ACTIVE | COMPLETED | TERMINATED | SUSPENDED
+    current_task_name        VARCHAR(200),  -- human-readable task name
+    current_task_assignee    VARCHAR(255),  -- who currently has the task
+    -- verification tracking
+    is_verified              BOOLEAN      NOT NULL DEFAULT FALSE,
+    verified_by              VARCHAR(255),
+    verified_at              TIMESTAMPTZ,
+    -- override tracking
+    override_status          VARCHAR(20),   -- PENDING | APPROVED | DENIED
+    bypassed_by              VARCHAR(255),
+    bypassed_reason          TEXT,
+    bypassed_at              TIMESTAMPTZ,
     created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_cdoc_case     ON ecm_core.case_documents(case_id);
 CREATE INDEX idx_cdoc_doc      ON ecm_core.case_documents(document_id);
 CREATE INDEX idx_cdoc_status   ON ecm_core.case_documents(status);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Case Timeline Events  (audit trail for case lifecycle)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE ecm_core.case_timeline_events (
+    id              SERIAL       PRIMARY KEY,
+    case_id         UUID         NOT NULL REFERENCES ecm_core.cases(id) ON DELETE CASCADE,
+    event_type      VARCHAR(50)  NOT NULL,
+    -- CASE_CREATED, CASE_STATUS_CHANGED, CHECKLIST_ITEM_UPLOADED,
+    -- CHECKLIST_ITEM_APPROVED, CHECKLIST_ITEM_REJECTED, CHECKLIST_ITEM_WAIVED,
+    -- WORKFLOW_STARTED, WORKFLOW_COMPLETED, OVERRIDE_REQUESTED,
+    -- OVERRIDE_APPROVED, OVERRIDE_DENIED, ADMIN_BYPASS, CASE_NOTE_ADDED
+    description     TEXT,
+    detail          TEXT,              -- additional context (reason, old→new status, etc.)
+    actor           VARCHAR(255),      -- email or 'system'
+    timestamp       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_case_timeline_case ON ecm_core.case_timeline_events(case_id);
+CREATE INDEX idx_case_timeline_ts   ON ecm_core.case_timeline_events(timestamp DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Case Override Requests  (non-admin requests bypass → admin reviews)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE ecm_core.case_override_requests (
+    id                  SERIAL       PRIMARY KEY,
+    case_id             UUID         NOT NULL REFERENCES ecm_core.cases(id) ON DELETE CASCADE,
+    checklist_item_id   INTEGER      NOT NULL REFERENCES ecm_core.case_documents(id) ON DELETE CASCADE,
+    item_name           VARCHAR(255),          -- denormalized for display
+    reason              TEXT         NOT NULL,
+    status              VARCHAR(20)  NOT NULL DEFAULT 'PENDING',  -- PENDING | APPROVED | DENIED
+    requested_by        VARCHAR(255) NOT NULL,
+    requested_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    reviewed_by         VARCHAR(255),
+    review_reason       TEXT,
+    reviewed_at         TIMESTAMPTZ
+);
+CREATE INDEX idx_override_case   ON ecm_core.case_override_requests(case_id);
+CREATE INDEX idx_override_status ON ecm_core.case_override_requests(status);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- External Participants  (Lawyers, Appraisers, Notaries — v2 app code)
@@ -320,15 +383,75 @@ CREATE TABLE ecm_core.external_participants (
     name             VARCHAR(200) NOT NULL,
     email            VARCHAR(255) NOT NULL,
     organization     VARCHAR(200),
-    role             VARCHAR(30)  NOT NULL,  -- LAWYER | APPRAISER | NOTARY | INSURER
-    access_token     VARCHAR(500),
-    token_expires_at TIMESTAMPTZ,
-    is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    role             VARCHAR(30)  NOT NULL,  -- LAWYER | APPRAISER | NOTARY | TITLE_COMPANY | OTHER
+    phone            VARCHAR(50),
+    invite_token     UUID         DEFAULT gen_random_uuid(),
+    token_expires_at TIMESTAMPTZ  NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+    otp_code             VARCHAR(6),
+    otp_expires_at       TIMESTAMPTZ,
+    failed_otp_attempts  INTEGER      NOT NULL DEFAULT 0,
+    locked_until         TIMESTAMPTZ,
+    last_otp_ip          VARCHAR(45),
+    session_token        TEXT,
+    session_ip           VARCHAR(45),
+    session_expires_at   TIMESTAMPTZ,
+    last_accessed_at     TIMESTAMPTZ,
+    invited_by           VARCHAR(255),
+    is_active            BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (case_id, email)
 );
-CREATE INDEX idx_ext_part_case  ON ecm_core.external_participants(case_id);
-CREATE INDEX idx_ext_part_email ON ecm_core.external_participants(email);
+CREATE INDEX idx_ext_part_case   ON ecm_core.external_participants(case_id);
+CREATE INDEX idx_ext_part_email  ON ecm_core.external_participants(email);
+CREATE INDEX idx_ext_part_invite_token  ON ecm_core.external_participants(invite_token);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Case Document Shares  (controls which docs are visible to external participants)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE ecm_core.case_document_shares (
+    id                      SERIAL       PRIMARY KEY,
+    case_id                 UUID         NOT NULL REFERENCES ecm_core.cases(id) ON DELETE CASCADE,
+    case_document_id        INTEGER      NOT NULL REFERENCES ecm_core.case_documents(id) ON DELETE CASCADE,
+    participant_id          INTEGER      NOT NULL REFERENCES ecm_core.external_participants(id) ON DELETE CASCADE,
+    shared_by               VARCHAR(255) NOT NULL,
+    shared_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (case_document_id, participant_id)
+);
+CREATE INDEX idx_cds_case        ON ecm_core.case_document_shares(case_id);
+CREATE INDEX idx_cds_participant ON ecm_core.case_document_shares(participant_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- External Uploads  (documents uploaded by external participants)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE ecm_core.external_uploads (
+    id                 SERIAL       PRIMARY KEY,
+    case_id            UUID         NOT NULL REFERENCES ecm_core.cases(id) ON DELETE CASCADE,
+    participant_id     INTEGER      NOT NULL REFERENCES ecm_core.external_participants(id) ON DELETE CASCADE,
+    document_id        UUID,                    -- soft ref → ecm_core.documents.id (after processing)
+    original_filename  VARCHAR(500) NOT NULL,
+    file_size_bytes    BIGINT,
+    storage_path       VARCHAR(1000),           -- MinIO path
+    description        TEXT,
+    uploaded_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_ext_upload_case ON ecm_core.external_uploads(case_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- External Access Audit Log
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE ecm_core.external_access_log (
+    id              BIGSERIAL    PRIMARY KEY,
+    participant_id  INTEGER      NOT NULL REFERENCES ecm_core.external_participants(id) ON DELETE CASCADE,
+    case_id         UUID         NOT NULL,
+    event_type      VARCHAR(30)  NOT NULL,
+    ip_address      VARCHAR(45),
+    user_agent      TEXT,
+    detail          TEXT,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_ext_access_participant ON ecm_core.external_access_log(participant_id);
+CREATE INDEX idx_ext_access_case ON ecm_core.external_access_log(case_id);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Notifications  (in-app notification inbox)
@@ -572,10 +695,11 @@ CREATE INDEX idx_admin_rp_active   ON ecm_admin.retention_policies(is_active);
 -- Tenant Configuration
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE ecm_admin.tenant_config (
-    key         VARCHAR(100) PRIMARY KEY,
-    value       TEXT         NOT NULL,
-    description VARCHAR(500),
-    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    key           VARCHAR(100) PRIMARY KEY,
+    value         TEXT         NOT NULL,
+    default_value TEXT,
+    description   VARCHAR(500),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -639,7 +763,7 @@ CREATE TABLE ecm_workflow.workflow_definition_configs (
     id                  SERIAL       PRIMARY KEY,
     name                VARCHAR(200) NOT NULL,
     description         VARCHAR(500),
-    process_key         VARCHAR(100) NOT NULL,
+    process_key         VARCHAR(100) NOT NULL UNIQUE,
     assigned_role       VARCHAR(100) NOT NULL DEFAULT 'ECM_BACKOFFICE',
     assigned_group_id   INTEGER      REFERENCES ecm_workflow.workflow_groups(id),
     is_active           BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -860,12 +984,29 @@ CREATE INDEX idx_ds_processed ON ecm_forms.docusign_events(processed);
 -- ecm_core: Roles
 -- ─────────────────────────────────────────────────────────────────────────────
 INSERT INTO ecm_core.roles (name, description, is_system) VALUES
+    ('ECM_SUPER_ADMIN','System-level super administrator',                     TRUE),
     ('ECM_ADMIN',      'Full system administration access',                    TRUE),
     ('ECM_DESIGNER',   'Can create and publish eForms and workflow templates', TRUE),
     ('ECM_BACKOFFICE', 'Standard back-office document and workflow access',    TRUE),
     ('ECM_REVIEWER',   'Can review and approve workflow tasks',                TRUE),
     ('ECM_READONLY',   'Read-only access to assigned departments',             TRUE)
 ON CONFLICT (name) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ecm_core: Super Admin User (dev/local only — seeded so first login gets SUPER_ADMIN)
+-- The user record is auto-created by Okta on first login.
+-- This seed assigns the SUPER_ADMIN role if the user + role exist.
+-- ─────────────────────────────────────────────────────────────────────────────
+INSERT INTO ecm_core.user_roles (user_id, role_id)
+SELECT u.id, r.id
+FROM ecm_core.users u
+CROSS JOIN ecm_core.roles r
+WHERE u.email = 'ecm.superadmin@dev.local'
+  AND r.name = 'ECM_SUPER_ADMIN'
+  AND NOT EXISTS (
+    SELECT 1 FROM ecm_core.user_roles ur
+    WHERE ur.user_id = u.id AND ur.role_id = r.id
+  );
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_core: Departments
@@ -883,15 +1024,91 @@ INSERT INTO ecm_core.departments (name, code) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- ecm_core: Email Templates (admin-editable, used by ecm-notification)
+-- Variables use {{variableName}} syntax — replaced at send time.
+-- ─────────────────────────────────────────────────────────────────────────────
+INSERT INTO ecm_core.email_templates (template_key, name, subject_template, body_template) VALUES
+(
+    'OTP_VERIFICATION',
+    'OTP Verification Code',
+    'ECM — Your Verification Code',
+    '<div style="font-family:sans-serif;max-width:400px;margin:0 auto;padding:20px">
+<h2 style="color:#1e40af">Verification Code</h2>
+<p style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#111;padding:16px 0;text-align:center;background:#f3f4f6;border-radius:8px">{{otp}}</p>
+<p style="color:#6b7280;font-size:14px">This code expires in 10 minutes.</p>
+<p style="color:#9ca3af;font-size:12px">If you did not request this code, please ignore this email.</p>
+</div>'
+),
+(
+    'PARTICIPANT_INVITE',
+    'External Participant Invitation',
+    'ECM — You''ve been added to a case',
+    '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px">
+<h2 style="color:#1e40af">Hello {{name}},</h2>
+<p>You have been added as a <strong>{{role}}</strong> on a case in the ECM platform.</p>
+<p>Click the button below to access the case documents:</p>
+<p style="text-align:center;padding:16px 0">
+<a href="{{inviteLink}}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Access Case Portal</a></p>
+<p style="color:#6b7280;font-size:14px">You will be asked to verify your email with a one-time code.</p>
+<p style="color:#9ca3af;font-size:12px">— ECM Platform</p>
+</div>'
+),
+(
+    'USER_INVITE',
+    'User Platform Invitation',
+    'ECM — You''ve been invited to the platform',
+    '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px">
+<h2 style="color:#1e40af">Welcome to ECM Platform</h2>
+<p>Hello {{displayName}},</p>
+<p>You have been invited to the ECM Platform as <strong>{{role}}</strong>.</p>
+<p>Click the button below to sign in:</p>
+<p style="text-align:center;padding:16px 0">
+<a href="{{signInLink}}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Sign In to ECM</a></p>
+<p style="color:#6b7280;font-size:14px">Use your organisation credentials to sign in.</p>
+<p style="color:#9ca3af;font-size:12px">— ECM Platform</p>
+</div>'
+),
+(
+    'TASK_ASSIGNED',
+    'Workflow Task Assigned',
+    'ECM — New review task: {{taskName}}',
+    '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px">
+<h2 style="color:#1e40af">New Review Task</h2>
+<p>A new task has been assigned to your group: <strong>{{candidateGroup}}</strong></p>
+<p><strong>Task:</strong> {{taskName}}</p>
+<p><strong>Document:</strong> {{documentName}}</p>
+<p style="text-align:center;padding:16px 0">
+<a href="{{appUrl}}/backoffice/queue" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Open Review Queue</a></p>
+<p style="color:#9ca3af;font-size:12px">— ECM Platform</p>
+</div>'
+),
+(
+    'CASE_STATUS_CHANGED',
+    'Case Status Update',
+    'ECM — Case {{caseRef}} status changed to {{status}}',
+    '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px">
+<h2 style="color:#1e40af">Case Status Update</h2>
+<p>Case <strong>{{caseRef}}</strong> for customer <strong>{{customerName}}</strong> has been updated.</p>
+<p><strong>New Status:</strong> {{status}}</p>
+{{#reason}}<p><strong>Reason:</strong> {{reason}}</p>{{/reason}}
+<p style="text-align:center;padding:16px 0">
+<a href="{{appUrl}}/cases/{{caseId}}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">View Case</a></p>
+<p style="color:#9ca3af;font-size:12px">— ECM Platform</p>
+</div>'
+)
+ON CONFLICT (template_key) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_core: RBAC Modules
 -- ─────────────────────────────────────────────────────────────────────────────
 INSERT INTO ecm_core.modules (code, name, sort_order) VALUES
     ('DOCUMENTS', 'Document Management', 1),
     ('WORKFLOW',  'Workflow & Tasks',     2),
     ('EFORMS',    'Electronic Forms',     3),
-    ('ADMIN',     'Administration',       4),
-    ('OCR',       'OCR & Scanning',       5),
-    ('ARCHIVE',   'Archive & Retention',  6);
+    ('CASE',      'Case Management',      4),
+    ('ADMIN',     'Administration',       5),
+    ('OCR',       'OCR & Scanning',       6),
+    ('ARCHIVE',   'Archive & Retention',  7);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_core: RBAC Permissions (24 total)
@@ -920,13 +1137,27 @@ INSERT INTO ecm_core.permissions (module_code, action, code, description) VALUES
     ('OCR',       'trigger', 'ocr:trigger', 'Trigger OCR processing'),
     ('OCR',       'view',    'ocr:view',    'View OCR results'),
     ('ARCHIVE',   'read',    'archive:read',   'View archived documents'),
-    ('ARCHIVE',   'manage',  'archive:manage', 'Manage retention policies');
+    ('ARCHIVE',   'manage',  'archive:manage', 'Manage retention policies'),
+    ('CASE',      'VIEW',    'CASE:VIEW',   'View cases and case details'),
+    ('CASE',      'CREATE',  'CASE:CREATE', 'Create new cases'),
+    ('CASE',      'UPDATE',  'CASE:UPDATE', 'Update case status, verify items, add notes'),
+    ('CASE',      'DELETE',  'CASE:DELETE', 'Delete and cancel cases'),
+    ('CASE',      'ASSIGN',  'CASE:ASSIGN', 'Assign and reassign cases'),
+    ('CASE',      'VERIFY',  'CASE:VERIFY', 'Verify checklist items'),
+    ('ADMIN',     'PRODUCT_VIEW',   'PRODUCT:VIEW',   'View products and catalogue'),
+    ('ADMIN',     'PRODUCT_CREATE', 'PRODUCT:CREATE', 'Create products'),
+    ('ADMIN',     'PRODUCT_UPDATE', 'PRODUCT:UPDATE', 'Update products and document types'),
+    ('ADMIN',     'PRODUCT_DELETE', 'PRODUCT:DELETE', 'Deactivate products'),
+    ('ADMIN',     'CUSTOMER_VIEW',   'CUSTOMER:VIEW',   'View customers and enrollments'),
+    ('ADMIN',     'CUSTOMER_CREATE', 'CUSTOMER:CREATE', 'Create customers'),
+    ('ADMIN',     'CUSTOMER_UPDATE', 'CUSTOMER:UPDATE', 'Update customers and enrollments'),
+    ('ADMIN',     'CUSTOMER_DELETE', 'CUSTOMER:DELETE', 'Deactivate customers');
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_core: Role → Permission grants
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- ECM_ADMIN: all 24 permissions
+-- ECM_ADMIN: all permissions (cross join — automatically includes new permissions)
 INSERT INTO ecm_core.role_permissions (role_id, permission_id, granted_by)
 SELECT r.id, p.id, 'system'
 FROM ecm_core.roles r, ecm_core.permissions p
@@ -940,7 +1171,10 @@ JOIN ecm_core.permissions p ON p.code IN (
     'documents:read', 'documents:write', 'documents:upload',
     'workflow:view',  'workflow:claim',   'workflow:approve', 'workflow:reject',
     'eforms:submit',  'eforms:review',
-    'ocr:view',       'archive:read'
+    'ocr:view',       'archive:read',
+    'CASE:VIEW', 'CASE:CREATE', 'CASE:UPDATE', 'CASE:VERIFY', 'CASE:ASSIGN',
+    'PRODUCT:VIEW',
+    'CUSTOMER:VIEW', 'CUSTOMER:CREATE', 'CUSTOMER:UPDATE'
 )
 WHERE r.name = 'ECM_BACKOFFICE';
 
@@ -952,7 +1186,10 @@ JOIN ecm_core.permissions p ON p.code IN (
     'documents:read',
     'workflow:view',  'workflow:approve', 'workflow:reject',
     'eforms:submit',  'eforms:review',
-    'archive:read'
+    'archive:read',
+    'CASE:VIEW', 'CASE:UPDATE', 'CASE:VERIFY', 'CASE:ASSIGN',
+    'PRODUCT:VIEW',
+    'CUSTOMER:VIEW'
 )
 WHERE r.name = 'ECM_REVIEWER';
 
@@ -1114,14 +1351,22 @@ WHERE dc.code = ot.category_code;
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_admin: Tenant Config
 -- ─────────────────────────────────────────────────────────────────────────────
-INSERT INTO ecm_admin.tenant_config (key, value, description) VALUES
-    ('tenant.name',          'ECM Platform', 'Organisation display name'),
-    ('tenant.logo_url',      '',             'Logo URL for header branding'),
-    ('tenant.primary_color', '#002347',      'Brand primary colour (hex)'),
-    ('tenant.support_email', '',             'Support email shown in UI footer'),
-    ('tenant.timezone',      'UTC',          'Default timezone for date display'),
-    ('webhook.document_indexed.url',    '',  'POST callback URL when document reaches INDEXED status'),
-    ('webhook.submission_signed.url',   '',  'POST callback URL when DocuSign signing is confirmed')
+INSERT INTO ecm_admin.tenant_config (key, value, default_value, description) VALUES
+    ('tenant.name',              'ECM Platform', 'ECM Platform', 'Organisation display name'),
+    ('tenant.logo_url',          '',             '',             'Logo URL for header branding'),
+    ('tenant.support_email',     '',             '',             'Support email shown in UI footer'),
+    ('tenant.timezone',          'UTC',          'UTC',          'Default timezone for date display'),
+    -- Navigation & Header
+    ('theme.sidebar_bg',        '#002347',      '#002347',      'Sidebar background colour'),
+    ('theme.sidebar_active',    '#00A651',      '#00A651',      'Sidebar active item / badge colour'),
+    ('theme.header_bg',         '#ffffff',      '#ffffff',      'Header bar background colour'),
+    ('theme.header_text',       '#111827',      '#111827',      'Header title text colour'),
+    -- Main Content
+    ('theme.accent',            '#4f46e5',      '#4f46e5',      'Buttons, links, focus rings, active states'),
+    ('theme.page_bg',           '#f4f6f9',      '#f4f6f9',      'Main content area background'),
+    -- Webhooks
+    ('webhook.document_indexed.url',    '',  '',             'POST callback URL when document reaches INDEXED status'),
+    ('webhook.submission_signed.url',   '',  '',             'POST callback URL when DocuSign signing is confirmed')
 ON CONFLICT (key) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -1150,8 +1395,431 @@ VALUES
      'document-dual-review', 'ECM_REVIEWER', TRUE, 24),
     ('Compliance Review',
      'Compliance team single-step review. Used for KYC and regulatory documents.',
-     'document-compliance-review', 'ECM_REVIEWER', TRUE, 24)
-ON CONFLICT DO NOTHING;
+     'document-compliance-review', 'ECM_REVIEWER', TRUE, 24),
+    ('Form Admin Triage Review',
+     'Form submission routed by admin to backoffice or reviewer. Reviewer can request additional documents.',
+     'form-admin-triage-review', 'ECM_ADMIN', TRUE, 48)
+ON CONFLICT (process_key) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ecm_workflow: Seed Workflow Templates (BPMN XML for Flowable deployment)
+--
+-- Two production-ready workflows:
+--   1. document-single-review  — Single-step backoffice review
+--   2. document-dual-review    — Two-step: backoffice triage → underwriter approval
+-- ─────────────────────────────────────────────────────────────────────────────
+
+INSERT INTO ecm_workflow.workflow_templates
+    (name, description, process_key, dsl_definition, bpmn_xml, bpmn_source, status, version, is_default, sla_hours, warning_threshold_pct)
+VALUES
+-- 1. Single-step backoffice review
+(
+    'General Document Review',
+    'Default single-step review by backoffice team. Document is reviewed and either approved or rejected.',
+    'document-single-review',
+    '{"processKey":"document-single-review","name":"General Document Review","steps":[{"id":"review","type":"USER_TASK","name":"Backoffice Review","candidateGroups":"ECM_BACKOFFICE","outcomes":["APPROVED","REJECTED"]}],"endStates":[{"id":"end_approved","name":"Approved","status":"APPROVED"},{"id":"end_rejected","name":"Rejected","status":"REJECTED"}]}'::jsonb,
+    '<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:flowable="http://flowable.org/bpmn"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://www.flowable.org/processdef">
+
+  <process id="document-single-review" name="General Document Review" isExecutable="true">
+
+    <startEvent id="start" name="Start" />
+
+    <sequenceFlow id="flow_start" sourceRef="start" targetRef="review" />
+
+    <userTask id="review" name="Backoffice Review"
+              flowable:candidateGroups="ECM_BACKOFFICE"
+              flowable:formKey="review-form">
+      <extensionElements>
+        <flowable:taskListener event="complete"
+            delegateExpression="${taskCompletedListener}" />
+      </extensionElements>
+    </userTask>
+
+    <sequenceFlow id="flow_review_gw" sourceRef="review" targetRef="gw_review" />
+
+    <exclusiveGateway id="gw_review" name="Review Decision" />
+
+    <sequenceFlow id="flow_approved" sourceRef="gw_review" targetRef="end_approved">
+      <conditionExpression>${decision == ''APPROVED''}</conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_rejected" sourceRef="gw_review" targetRef="end_rejected">
+      <conditionExpression>${decision == ''REJECTED''}</conditionExpression>
+    </sequenceFlow>
+
+    <endEvent id="end_approved" name="Approved">
+      <extensionElements>
+        <flowable:executionListener event="end"
+            delegateExpression="${processEndListener}" />
+      </extensionElements>
+    </endEvent>
+
+    <endEvent id="end_rejected" name="Rejected">
+      <extensionElements>
+        <flowable:executionListener event="end"
+            delegateExpression="${processEndListener}" />
+      </extensionElements>
+    </endEvent>
+
+  </process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane bpmnElement="document-single-review">
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <omgdc:Bounds x="180" y="200" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="review_di" bpmnElement="review">
+        <omgdc:Bounds x="300" y="178" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_review_di" bpmnElement="gw_review" isMarkerVisible="true">
+        <omgdc:Bounds x="530" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_approved_di" bpmnElement="end_approved">
+        <omgdc:Bounds x="660" y="130" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_rejected_di" bpmnElement="end_rejected">
+        <omgdc:Bounds x="660" y="270" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="flow_start_di" bpmnElement="flow_start">
+        <omgdi:waypoint x="216" y="218" />
+        <omgdi:waypoint x="300" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_review_gw_di" bpmnElement="flow_review_gw">
+        <omgdi:waypoint x="460" y="218" />
+        <omgdi:waypoint x="530" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_approved_di" bpmnElement="flow_approved">
+        <omgdi:waypoint x="555" y="193" />
+        <omgdi:waypoint x="555" y="148" />
+        <omgdi:waypoint x="660" y="148" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_rejected_di" bpmnElement="flow_rejected">
+        <omgdi:waypoint x="555" y="243" />
+        <omgdi:waypoint x="555" y="288" />
+        <omgdi:waypoint x="660" y="288" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>',
+    'VISUAL', 'PUBLISHED', 1, TRUE, 48, 80
+),
+
+-- 2. Two-step: backoffice triage → underwriter approval
+(
+    'Underwriter Review',
+    'Two-step workflow: backoffice triage then underwriter approval. Used for loan documents requiring dual sign-off.',
+    'document-dual-review',
+    '{"processKey":"document-dual-review","name":"Underwriter Review","steps":[{"id":"triage","type":"USER_TASK","name":"Backoffice Triage","candidateGroups":"ECM_BACKOFFICE","outcomes":["FORWARD","REJECTED"]},{"id":"underwriter_review","type":"USER_TASK","name":"Underwriter Review","candidateGroups":"ECM_REVIEWER","outcomes":["APPROVED","REJECTED","RETURN"]}],"endStates":[{"id":"end_approved","name":"Approved","status":"APPROVED"},{"id":"end_rejected","name":"Rejected","status":"REJECTED"}]}'::jsonb,
+    '<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:flowable="http://flowable.org/bpmn"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://www.flowable.org/processdef">
+
+  <process id="document-dual-review" name="Underwriter Review" isExecutable="true">
+
+    <startEvent id="start" name="Start" />
+
+    <sequenceFlow id="flow_start" sourceRef="start" targetRef="triage" />
+
+    <!-- Step 1: Backoffice Triage -->
+    <userTask id="triage" name="Backoffice Triage"
+              flowable:candidateGroups="ECM_BACKOFFICE"
+              flowable:formKey="review-form">
+      <extensionElements>
+        <flowable:taskListener event="complete"
+            delegateExpression="${taskCompletedListener}" />
+      </extensionElements>
+    </userTask>
+
+    <sequenceFlow id="flow_triage_gw" sourceRef="triage" targetRef="gw_triage" />
+
+    <exclusiveGateway id="gw_triage" name="Triage Decision" />
+
+    <sequenceFlow id="flow_triage_forward" sourceRef="gw_triage" targetRef="underwriter_review">
+      <conditionExpression>${decision == ''FORWARD'' || decision == ''APPROVED''}</conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_triage_reject" sourceRef="gw_triage" targetRef="end_rejected">
+      <conditionExpression>${decision == ''REJECTED''}</conditionExpression>
+    </sequenceFlow>
+
+    <!-- Step 2: Underwriter Review -->
+    <userTask id="underwriter_review" name="Underwriter Review"
+              flowable:candidateGroups="ECM_REVIEWER"
+              flowable:formKey="review-form">
+      <extensionElements>
+        <flowable:taskListener event="complete"
+            delegateExpression="${taskCompletedListener}" />
+      </extensionElements>
+    </userTask>
+
+    <sequenceFlow id="flow_uw_gw" sourceRef="underwriter_review" targetRef="gw_underwriter" />
+
+    <exclusiveGateway id="gw_underwriter" name="Underwriter Decision" />
+
+    <sequenceFlow id="flow_uw_approved" sourceRef="gw_underwriter" targetRef="end_approved">
+      <conditionExpression>${decision == ''APPROVED''}</conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_uw_rejected" sourceRef="gw_underwriter" targetRef="end_rejected_uw">
+      <conditionExpression>${decision == ''REJECTED''}</conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_uw_return" sourceRef="gw_underwriter" targetRef="triage">
+      <conditionExpression>${decision == ''RETURN''}</conditionExpression>
+    </sequenceFlow>
+
+    <!-- End States -->
+    <endEvent id="end_approved" name="Approved">
+      <extensionElements>
+        <flowable:executionListener event="end"
+            delegateExpression="${processEndListener}" />
+      </extensionElements>
+    </endEvent>
+
+    <endEvent id="end_rejected" name="Rejected (Triage)">
+      <extensionElements>
+        <flowable:executionListener event="end"
+            delegateExpression="${processEndListener}" />
+      </extensionElements>
+    </endEvent>
+
+    <endEvent id="end_rejected_uw" name="Rejected (Underwriter)">
+      <extensionElements>
+        <flowable:executionListener event="end"
+            delegateExpression="${processEndListener}" />
+      </extensionElements>
+    </endEvent>
+
+  </process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane bpmnElement="document-dual-review">
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <omgdc:Bounds x="100" y="200" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="triage_di" bpmnElement="triage">
+        <omgdc:Bounds x="210" y="178" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_triage_di" bpmnElement="gw_triage" isMarkerVisible="true">
+        <omgdc:Bounds x="430" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="underwriter_review_di" bpmnElement="underwriter_review">
+        <omgdc:Bounds x="550" y="178" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_underwriter_di" bpmnElement="gw_underwriter" isMarkerVisible="true">
+        <omgdc:Bounds x="770" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_approved_di" bpmnElement="end_approved">
+        <omgdc:Bounds x="900" y="130" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_rejected_di" bpmnElement="end_rejected">
+        <omgdc:Bounds x="440" y="320" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_rejected_uw_di" bpmnElement="end_rejected_uw">
+        <omgdc:Bounds x="900" y="270" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="flow_start_di" bpmnElement="flow_start">
+        <omgdi:waypoint x="136" y="218" />
+        <omgdi:waypoint x="210" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_triage_gw_di" bpmnElement="flow_triage_gw">
+        <omgdi:waypoint x="370" y="218" />
+        <omgdi:waypoint x="430" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_triage_forward_di" bpmnElement="flow_triage_forward">
+        <omgdi:waypoint x="480" y="218" />
+        <omgdi:waypoint x="550" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_triage_reject_di" bpmnElement="flow_triage_reject">
+        <omgdi:waypoint x="455" y="243" />
+        <omgdi:waypoint x="455" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_uw_gw_di" bpmnElement="flow_uw_gw">
+        <omgdi:waypoint x="710" y="218" />
+        <omgdi:waypoint x="770" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_uw_approved_di" bpmnElement="flow_uw_approved">
+        <omgdi:waypoint x="795" y="193" />
+        <omgdi:waypoint x="795" y="148" />
+        <omgdi:waypoint x="900" y="148" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_uw_rejected_di" bpmnElement="flow_uw_rejected">
+        <omgdi:waypoint x="795" y="243" />
+        <omgdi:waypoint x="795" y="288" />
+        <omgdi:waypoint x="900" y="288" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_uw_return_di" bpmnElement="flow_uw_return">
+        <omgdi:waypoint x="770" y="218" />
+        <omgdi:waypoint x="740" y="120" />
+        <omgdi:waypoint x="290" y="120" />
+        <omgdi:waypoint x="290" y="178" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>',
+    'VISUAL', 'PUBLISHED', 1, FALSE, 24, 80
+)
+ON CONFLICT (process_key) DO NOTHING;
+
+-- 3. Form Admin Triage Review (form → admin → backoffice/reviewer → approve/reject/additional docs)
+INSERT INTO ecm_workflow.workflow_templates
+    (name, description, process_key, dsl_definition, bpmn_xml, bpmn_source, status, version, is_default, sla_hours, warning_threshold_pct)
+VALUES (
+    'Form Admin Triage Review',
+    'Form submission triggers admin triage. Admin routes to backoffice or directly to reviewer. Reviewer can approve, reject, or send back to backoffice for additional documents.',
+    'form-admin-triage-review',
+    '{"processKey":"form-admin-triage-review","name":"Form Admin Triage Review","steps":[{"id":"admin_triage","type":"USER_TASK","name":"Admin Triage","candidateGroups":"ECM_ADMIN","outcomes":["TO_BACKOFFICE","TO_REVIEWER"]},{"id":"backoffice_review","type":"USER_TASK","name":"Backoffice Review","candidateGroups":"ECM_BACKOFFICE","outcomes":["FORWARD"]},{"id":"reviewer_approval","type":"USER_TASK","name":"Reviewer Approval","candidateGroups":"ECM_REVIEWER","outcomes":["APPROVED","REJECTED","ADDITIONAL_DOCS"]}],"endStates":[{"id":"end_approved","name":"Approved","status":"APPROVED"},{"id":"end_rejected","name":"Rejected","status":"REJECTED"}]}'::jsonb,
+    '<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:flowable="http://flowable.org/bpmn"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://www.flowable.org/processdef">
+  <process id="form-admin-triage-review" name="Form Admin Triage Review" isExecutable="true">
+    <startEvent id="start" name="Form Submitted" />
+    <sequenceFlow id="flow_start" sourceRef="start" targetRef="admin_triage" />
+    <userTask id="admin_triage" name="Admin Triage"
+              flowable:candidateGroups="ECM_ADMIN"
+              flowable:formKey="review-form">
+      <documentation>Admin reviews the submitted form and decides routing:
+        TO_BACKOFFICE = needs backoffice document collection first
+        TO_REVIEWER = ready for direct reviewer approval</documentation>
+      <extensionElements>
+        <flowable:taskListener event="complete" delegateExpression="${taskCompletedListener}" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="flow_triage_gw" sourceRef="admin_triage" targetRef="gw_triage" />
+    <exclusiveGateway id="gw_triage" name="Routing Decision" />
+    <sequenceFlow id="flow_to_backoffice" sourceRef="gw_triage" targetRef="backoffice_review">
+      <conditionExpression>${decision == ''TO_BACKOFFICE'' || decision == ''REJECTED'' || decision == ''PASS''}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_to_reviewer" sourceRef="gw_triage" targetRef="reviewer_approval">
+      <conditionExpression>${decision == ''TO_REVIEWER'' || decision == ''APPROVED''}</conditionExpression>
+    </sequenceFlow>
+    <userTask id="backoffice_review" name="Backoffice Review"
+              flowable:candidateGroups="ECM_BACKOFFICE"
+              flowable:formKey="review-form">
+      <documentation>Backoffice collects/verifies documents, then forwards to reviewer.</documentation>
+      <extensionElements>
+        <flowable:taskListener event="complete" delegateExpression="${taskCompletedListener}" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="flow_bo_to_reviewer" sourceRef="backoffice_review" targetRef="reviewer_approval" />
+    <userTask id="reviewer_approval" name="Reviewer Approval"
+              flowable:candidateGroups="ECM_REVIEWER"
+              flowable:formKey="review-form">
+      <documentation>Final review: APPROVED, REJECTED, or ADDITIONAL_DOCS (back to backoffice)</documentation>
+      <extensionElements>
+        <flowable:taskListener event="complete" delegateExpression="${taskCompletedListener}" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="flow_reviewer_gw" sourceRef="reviewer_approval" targetRef="gw_reviewer" />
+    <exclusiveGateway id="gw_reviewer" name="Reviewer Decision" />
+    <sequenceFlow id="flow_rv_approved" sourceRef="gw_reviewer" targetRef="end_approved">
+      <conditionExpression>${decision == ''APPROVED''}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_rv_rejected" sourceRef="gw_reviewer" targetRef="end_rejected">
+      <conditionExpression>${decision == ''REJECTED''}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_rv_additional" sourceRef="gw_reviewer" targetRef="backoffice_review">
+      <conditionExpression>${decision == ''ADDITIONAL_DOCS''}</conditionExpression>
+    </sequenceFlow>
+    <endEvent id="end_approved" name="Approved">
+      <extensionElements>
+        <flowable:executionListener event="end" delegateExpression="${processEndListener}" />
+      </extensionElements>
+    </endEvent>
+    <endEvent id="end_rejected" name="Rejected">
+      <extensionElements>
+        <flowable:executionListener event="end" delegateExpression="${processEndListener}" />
+      </extensionElements>
+    </endEvent>
+  </process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane bpmnElement="form-admin-triage-review">
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <omgdc:Bounds x="80" y="250" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="admin_triage_di" bpmnElement="admin_triage">
+        <omgdc:Bounds x="190" y="228" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_triage_di" bpmnElement="gw_triage" isMarkerVisible="true">
+        <omgdc:Bounds x="420" y="243" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="backoffice_review_di" bpmnElement="backoffice_review">
+        <omgdc:Bounds x="530" y="340" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="reviewer_approval_di" bpmnElement="reviewer_approval">
+        <omgdc:Bounds x="730" y="228" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_reviewer_di" bpmnElement="gw_reviewer" isMarkerVisible="true">
+        <omgdc:Bounds x="960" y="243" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_approved_di" bpmnElement="end_approved">
+        <omgdc:Bounds x="1090" y="180" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_rejected_di" bpmnElement="end_rejected">
+        <omgdc:Bounds x="1090" y="320" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="flow_start_di" bpmnElement="flow_start">
+        <omgdi:waypoint x="116" y="268" />
+        <omgdi:waypoint x="190" y="268" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_triage_gw_di" bpmnElement="flow_triage_gw">
+        <omgdi:waypoint x="350" y="268" />
+        <omgdi:waypoint x="420" y="268" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_to_backoffice_di" bpmnElement="flow_to_backoffice">
+        <omgdi:waypoint x="445" y="293" />
+        <omgdi:waypoint x="445" y="380" />
+        <omgdi:waypoint x="530" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_to_reviewer_di" bpmnElement="flow_to_reviewer">
+        <omgdi:waypoint x="470" y="268" />
+        <omgdi:waypoint x="730" y="268" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_bo_to_reviewer_di" bpmnElement="flow_bo_to_reviewer">
+        <omgdi:waypoint x="690" y="380" />
+        <omgdi:waypoint x="810" y="380" />
+        <omgdi:waypoint x="810" y="308" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_reviewer_gw_di" bpmnElement="flow_reviewer_gw">
+        <omgdi:waypoint x="890" y="268" />
+        <omgdi:waypoint x="960" y="268" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_rv_approved_di" bpmnElement="flow_rv_approved">
+        <omgdi:waypoint x="985" y="243" />
+        <omgdi:waypoint x="985" y="198" />
+        <omgdi:waypoint x="1090" y="198" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_rv_rejected_di" bpmnElement="flow_rv_rejected">
+        <omgdi:waypoint x="985" y="293" />
+        <omgdi:waypoint x="985" y="338" />
+        <omgdi:waypoint x="1090" y="338" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_rv_additional_di" bpmnElement="flow_rv_additional">
+        <omgdi:waypoint x="960" y="268" />
+        <omgdi:waypoint x="940" y="450" />
+        <omgdi:waypoint x="610" y="450" />
+        <omgdi:waypoint x="610" y="420" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>',
+    'VISUAL', 'PUBLISHED', 1, FALSE, 48, 80
+)
+ON CONFLICT (process_key) DO NOTHING;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════════

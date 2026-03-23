@@ -92,6 +92,9 @@ public class GatewaySecurityConfig {
                         // ── Circuit breaker fallback endpoints ────────────────────
                         .pathMatchers("/fallback/**").permitAll()
 
+                        // ── External participant access (OTP-based, no JWT) ─────
+                        .pathMatchers("/api/admin/cases/external/**").permitAll()
+
                         // ── Everything else requires a valid Okta JWT ─────────────
                         .anyExchange().authenticated()
                 )

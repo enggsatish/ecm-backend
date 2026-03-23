@@ -108,6 +108,9 @@ public class EFormsDtos {
         private UUID                         existingSubmissionId;
         /** Soft ref to PartyDto.externalId — set from Step 1 of FormFillPage. Optional. */
         private String                       partyExternalId;
+        /** When true, skip workflow trigger — used for case-linked form submissions
+         *  where the case manages its own review flow. */
+        private boolean                      skipWorkflow = false;
     }
 
     @Data

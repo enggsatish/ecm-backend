@@ -35,7 +35,7 @@ public class FormDesignerController {
     private final FormMapper            formMapper;
 
     @PostMapping("/{id}/publish")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<FormDefinitionDto>> publish(
             @PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.ok(ApiResponse.ok(
@@ -43,7 +43,7 @@ public class FormDesignerController {
     }
 
     @PostMapping("/{id}/archive")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<FormDefinitionDto>> archive(
             @PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.ok(ApiResponse.ok(
@@ -52,7 +52,7 @@ public class FormDesignerController {
 
     /** Body (optional): { "newFormKey": "OTHER-FORM-KEY" } */
     @PostMapping("/{id}/clone")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<FormDefinitionDto>> clone(
             @PathVariable UUID id,
             @RequestBody(required = false) Map<String, String> body,
@@ -63,7 +63,7 @@ public class FormDesignerController {
     }
 
     @PostMapping("/{id}/deprecate")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'eforms:admin')")
     public ResponseEntity<ApiResponse<FormDefinitionDto>> deprecate(
             @PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.ok(ApiResponse.ok(
@@ -75,7 +75,7 @@ public class FormDesignerController {
      * The frontend suppresses the submit button when previewMode is set.
      */
     @GetMapping("/{id}/preview")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<Map<String, Object>>> preview(@PathVariable UUID id) {
         FormDefinition def = definitionService.getById(id);
         return ResponseEntity.ok(ApiResponse.ok(Map.of(

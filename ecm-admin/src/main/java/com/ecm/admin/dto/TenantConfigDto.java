@@ -9,12 +9,14 @@ public class TenantConfigDto {
 
     private String key;
     private String value;
+    private String defaultValue;
     private String description;
     private OffsetDateTime updatedAt;
 
     public static TenantConfigDto from(TenantConfig tc) {
         TenantConfigDto dto = new TenantConfigDto();
         dto.key = tc.getKey(); dto.value = tc.getValue();
+        dto.defaultValue = tc.getDefaultValue();
         dto.description = tc.getDescription(); dto.updatedAt = tc.getUpdatedAt();
         return dto;
     }
@@ -23,6 +25,8 @@ public class TenantConfigDto {
     public void setKey(String key) { this.key = key; }
     public String getValue() { return value; }
     public void setValue(String value) { this.value = value; }
+    public String getDefaultValue() { return defaultValue; }
+    public void setDefaultValue(String defaultValue) { this.defaultValue = defaultValue; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

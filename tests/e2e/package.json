@@ -1,0 +1,27 @@
+{
+  "name": "ecm-e2e-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright E2E tests for ECM Platform",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "test:ui": "npx playwright test --ui",
+    "test:debug": "npx playwright test --debug",
+    "test:auth": "npx playwright test specs/01-auth.spec.js",
+    "test:documents": "npx playwright test specs/02-document-upload.spec.js",
+    "test:cases": "npx playwright test specs/03-case-lifecycle.spec.js",
+    "test:eforms": "npx playwright test specs/04-eform-submit.spec.js",
+    "test:workflow": "npx playwright test specs/05-workflow-designer.spec.js",
+    "test:notifications": "npx playwright test specs/06-notifications.spec.js",
+    "test:roles": "npx playwright test specs/07-role-access.spec.js",
+    "test:session": "npx playwright test specs/08-session-renewal.spec.js",
+    "setup": "npx playwright install chromium && node fixtures/setup-auth.js",
+    "report": "npx playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "dotenv": "^16.4.0"
+  }
+}

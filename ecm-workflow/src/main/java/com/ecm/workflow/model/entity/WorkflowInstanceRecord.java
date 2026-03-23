@@ -19,7 +19,8 @@ public class WorkflowInstanceRecord {
         INFO_REQUESTED,
         COMPLETED_APPROVED,
         COMPLETED_REJECTED,
-        CANCELLED
+        CANCELLED,
+        FAILED
     }
 
     public enum TriggerType {

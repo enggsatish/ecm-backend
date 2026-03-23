@@ -49,7 +49,7 @@ public class HierarchyController {
      * Admin-only: create a new segment.
      */
     @PostMapping("/segments")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     @AuditLog(event = "SEGMENT_CREATED", resourceType = "SEGMENT")
     public ResponseEntity<ApiResponse<SegmentDto>> createSegment(
             @Valid @RequestBody SegmentRequest req) {
@@ -64,7 +64,7 @@ public class HierarchyController {
      * Code is immutable after creation.
      */
     @PutMapping("/segments/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     @AuditLog(event = "SEGMENT_UPDATED", resourceType = "SEGMENT")
     public ResponseEntity<ApiResponse<SegmentDto>> updateSegment(
             @PathVariable Integer id,
@@ -92,7 +92,7 @@ public class HierarchyController {
      * Admin-only: create a new product line under the given segment.
      */
     @PostMapping("/product-lines")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     @AuditLog(event = "PRODUCT_LINE_CREATED", resourceType = "PRODUCT_LINE")
     public ResponseEntity<ApiResponse<ProductLineDto>> createProductLine(
             @Valid @RequestBody ProductLineRequest req) {
@@ -106,7 +106,7 @@ public class HierarchyController {
      * Admin-only: update name, description, or active flag.
      */
     @PutMapping("/product-lines/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'PRODUCT:UPDATE')")
     @AuditLog(event = "PRODUCT_LINE_UPDATED", resourceType = "PRODUCT_LINE")
     public ResponseEntity<ApiResponse<ProductLineDto>> updateProductLine(
             @PathVariable Integer id,

@@ -75,7 +75,7 @@ public class ProductDto {
         @NotBlank @Size(max = 50) private String productCode;
         @NotBlank @Size(max = 200) private String displayName;
         private String description;
-        private String productSchema;
+        private Object productSchema;     // accepts JSON object or string from frontend
         private String caseWorkflowKey;
         private Integer segmentId;
         private Integer productLineId;
@@ -86,8 +86,20 @@ public class ProductDto {
         public void setDisplayName(String displayName) { this.displayName = displayName; }
         public String getDescription() { return description; }
         public void setDescription(String description) { this.description = description; }
-        public String getProductSchema() { return productSchema; }
-        public void setProductSchema(String productSchema) { this.productSchema = productSchema; }
+        public Object getProductSchema() { return productSchema; }
+        public void setProductSchema(Object productSchema) { this.productSchema = productSchema; }
+
+        /** Returns productSchema as a JSON string for DB storage. */
+        public String getProductSchemaAsString() {
+            if (productSchema == null) return null;
+            if (productSchema instanceof String s) return s;
+            try {
+                return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(productSchema);
+            } catch (Exception e) {
+                return productSchema.toString();
+            }
+        }
+
         public String getCaseWorkflowKey() { return caseWorkflowKey; }
         public void setCaseWorkflowKey(String caseWorkflowKey) { this.caseWorkflowKey = caseWorkflowKey; }
         public Integer getSegmentId() { return segmentId; }

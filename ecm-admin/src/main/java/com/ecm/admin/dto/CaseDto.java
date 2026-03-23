@@ -19,8 +19,12 @@ public class CaseDto {
             String productName,
             String caseType,
             String status,
+            Boolean returnedFromReview,
             String assignedTo,
             String assignedToName,
+            String assignedToGroup,
+            String claimedBy,
+            String claimedByName,
             String sourceSystem,
             String sourceRef,
             String processInstanceId,
@@ -43,7 +47,18 @@ public class CaseDto {
             String formKey,            // for EFORM type — navigate to /eforms/fill/{formKey}
             UUID documentId,           // null until uploaded
             String documentName,       // null until uploaded
-            String status              // PENDING | UPLOADED | UNDER_REVIEW | APPROVED | REJECTED | WAIVED
+            String status,             // PENDING | UPLOADED | UNDER_REVIEW | APPROVED | REJECTED | WAIVED
+            // workflow tracking
+            String workflowInstanceId,
+            String workflowStatus,     // ACTIVE | COMPLETED | TERMINATED | SUSPENDED
+            String currentTaskName,
+            String currentTaskAssignee,
+            // override tracking
+            String overrideStatus,     // PENDING | APPROVED | DENIED
+            // verification
+            Boolean isVerified,
+            String verifiedBy,
+            OffsetDateTime verifiedAt
     ) {}
 
     // ── Request DTOs ──────────────────────────────────────────────────────────
@@ -81,5 +96,143 @@ public class CaseDto {
 
     public record WaiveChecklistItemRequest(
             String reason
+    ) {}
+
+    // ── Override DTOs ──────────────────────────────────────────────────────────
+
+    public record OverrideRequest(
+            String reason
+    ) {}
+
+    public record ReviewOverrideRequest(
+            String decision,           // APPROVED | DENIED
+            String reason
+    ) {}
+
+    public record AdminBypassRequest(
+            String reason
+    ) {}
+
+    public record OverrideRequestResponse(
+            Integer id,
+            UUID caseId,
+            Integer checklistItemId,
+            String itemName,
+            String reason,
+            String status,
+            String requestedBy,
+            OffsetDateTime requestedAt,
+            String reviewedBy,
+            String reviewReason,
+            OffsetDateTime reviewedAt
+    ) {}
+
+    // ── Timeline DTO ──────────────────────────────────────────────────────────
+
+    // ── Assignment DTO ──────────────────────────────────────────────────────
+
+    public record AssignCaseRequest(
+            String assignTo,           // email/subject (person) — mutually exclusive with assignToGroup
+            String assignToName,       // display name
+            String assignToGroup,      // role name (group) — mutually exclusive with assignTo
+            String comment
+    ) {}
+
+    public record ClaimCaseRequest(
+            String comment
+    ) {}
+
+    // ── Verification DTO ─────────────────────────────────────────────────────
+
+    public record VerifyItemsRequest(
+            List<Integer> verifiedItemIds,   // IDs of items checked as verified
+            String assignToGroup,            // optional: assign for review after saving
+            String assignTo,                 // optional: assign to person for review
+            String assignToName
+    ) {}
+
+    // ── Request Additional Docs ──────────────────────────────────────────────
+
+    public record RequestAdditionalDocsRequest(
+            List<Integer> categoryIds,       // document categories to add as new checklist items
+            String comment,                  // reason / what's needed
+            String reassignTo,               // person to reassign case to
+            String reassignToName
+    ) {}
+
+    // ── External Participants ─────────────────────────────────────────────────
+
+    public record AddParticipantRequest(
+            String name,
+            String email,
+            String organization,
+            String role,           // LAWYER | APPRAISER | NOTARY | TITLE_COMPANY | OTHER
+            String phone
+    ) {}
+
+    public record ParticipantResponse(
+            Integer id,
+            UUID caseId,
+            String name,
+            String email,
+            String organization,
+            String role,
+            String phone,
+            UUID inviteToken,
+            OffsetDateTime tokenExpiresAt,
+            OffsetDateTime lastAccessedAt,
+            String invitedBy,
+            Boolean isActive,
+            OffsetDateTime createdAt
+    ) {}
+
+    public record ShareDocumentsRequest(
+            Integer participantId,
+            List<Integer> caseDocumentIds
+    ) {}
+
+    public record OtpVerifyRequest(
+            String email,
+            String otp
+    ) {}
+
+    public record ExternalCaseView(
+            UUID caseId,
+            String productName,
+            String customerName,
+            String caseStatus,
+            String participantName,
+            String participantRole,
+            List<SharedDocument> sharedDocuments,
+            List<ExternalUploadDto> uploads
+    ) {}
+
+    public record SharedDocument(
+            Integer caseDocumentId,
+            String documentName,
+            String documentTypeName,
+            String status,
+            UUID documentId          // for download
+    ) {}
+
+    public record ExternalUploadDto(
+            Integer id,
+            String originalFilename,
+            Long fileSizeBytes,
+            String description,
+            OffsetDateTime uploadedAt,
+            UUID documentId,
+            String participantName,
+            String participantRole
+    ) {}
+
+    // ── Timeline DTO ──────────────────────────────────────────────────────────
+
+    public record CaseTimelineEvent(
+            String eventType,
+            String description,
+            String detail,
+            String actor,
+            OffsetDateTime timestamp
     ) {}
 }

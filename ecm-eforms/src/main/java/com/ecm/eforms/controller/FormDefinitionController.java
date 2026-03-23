@@ -39,7 +39,7 @@ public class FormDefinitionController {
     private final FormMapper            formMapper;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<FormDefinitionDto>> create(
             @Valid @RequestBody CreateFormDefinitionRequest req,
             @AuthenticationPrincipal Jwt jwt) {
@@ -50,7 +50,7 @@ public class FormDefinitionController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER','ECM_BACKOFFICE','ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'eforms:submit')")
     public ResponseEntity<ApiResponse<Page<FormDefinitionSummary>>> list(
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "0")  int page,
@@ -62,14 +62,14 @@ public class FormDefinitionController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER','ECM_BACKOFFICE','ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'eforms:submit')")
     public ResponseEntity<ApiResponse<FormDefinitionDto>> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(
                 formMapper.toDto(definitionService.getById(id))));
     }
 
     @GetMapping("/{id}/versions")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<List<FormDefinitionSummary>>> getVersions(@PathVariable UUID id) {
         FormDefinition def = definitionService.getById(id);
         return ResponseEntity.ok(ApiResponse.ok(
@@ -77,7 +77,7 @@ public class FormDefinitionController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<FormDefinitionDto>> update(
             @PathVariable UUID id,
             @RequestBody UpdateFormDefinitionRequest req,
@@ -88,7 +88,7 @@ public class FormDefinitionController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_DESIGNER')")
+    @PreAuthorize("hasPermission(null, 'eforms:design')")
     public ResponseEntity<ApiResponse<Void>> delete(
             @PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
 

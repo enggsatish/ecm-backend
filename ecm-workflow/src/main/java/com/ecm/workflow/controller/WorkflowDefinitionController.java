@@ -47,7 +47,7 @@ public class WorkflowDefinitionController {
     }
 
     @PostMapping("/definitions")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "WORKFLOW_DEFINITION_CREATED", resourceType = "WORKFLOW_CONFIG")
     public ResponseEntity<ApiResponse<WorkflowDefinitionDto>> createDefinition(
             @Valid @RequestBody WorkflowDefinitionRequest req) {
@@ -57,7 +57,7 @@ public class WorkflowDefinitionController {
     }
 
     @PutMapping("/definitions/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "WORKFLOW_DEFINITION_UPDATED", resourceType = "WORKFLOW_CONFIG")
     public ResponseEntity<ApiResponse<WorkflowDefinitionDto>> updateDefinition(
             @PathVariable Integer id,
@@ -69,13 +69,13 @@ public class WorkflowDefinitionController {
     // ── Workflow Groups ───────────────────────────────────────────────────────
 
     @GetMapping("/groups")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     public ResponseEntity<ApiResponse<List<WorkflowGroupDto>>> listGroups() {
         return ResponseEntity.ok(ApiResponse.ok(adminService.listGroups()));
     }
 
     @PostMapping("/groups")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "WORKFLOW_GROUP_CREATED", resourceType = "WORKFLOW_CONFIG")
     public ResponseEntity<ApiResponse<WorkflowGroupDto>> createGroup(
             @Valid @RequestBody WorkflowGroupRequest req) {
@@ -85,7 +85,7 @@ public class WorkflowDefinitionController {
     }
 
     @PostMapping("/groups/{groupId}/members")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "WORKFLOW_GROUP_MEMBER_ADDED", resourceType = "WORKFLOW_CONFIG")
     public ResponseEntity<ApiResponse<Void>> addMember(
             @PathVariable Integer groupId,
@@ -96,7 +96,7 @@ public class WorkflowDefinitionController {
     }
 
     @DeleteMapping("/groups/{groupId}/members/{userId}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "WORKFLOW_GROUP_MEMBER_REMOVED", resourceType = "WORKFLOW_CONFIG")
     public ResponseEntity<ApiResponse<Void>> removeMember(
             @PathVariable Integer groupId,

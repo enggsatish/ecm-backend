@@ -12,7 +12,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/retention-policies")
-@PreAuthorize("hasRole('ECM_ADMIN')")
+@PreAuthorize("hasPermission(null, 'admin:configure')")
 public class RetentionPolicyController {
 
     private final RetentionPolicyService service;

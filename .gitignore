@@ -37,3 +37,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+# Test credentials — never commit
+tests/api/test.env
+tests/api/test-results/

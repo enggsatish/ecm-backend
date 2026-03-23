@@ -43,7 +43,7 @@ public class ProductService {
         p.setProductCode(req.getProductCode().toUpperCase().trim());
         p.setDisplayName(req.getDisplayName().trim());
         p.setDescription(req.getDescription());
-        p.setProductSchema(req.getProductSchema());
+        p.setProductSchema(req.getProductSchemaAsString());
         p.setCaseWorkflowKey(req.getCaseWorkflowKey());
         p.setSegmentId(req.getSegmentId());
         p.setProductLineId(req.getProductLineId());
@@ -54,7 +54,7 @@ public class ProductService {
         Product p = findOrThrow(id);
         p.setDisplayName(req.getDisplayName().trim());
         p.setDescription(req.getDescription());
-        p.setProductSchema(req.getProductSchema());
+        p.setProductSchema(req.getProductSchemaAsString());
         p.setCaseWorkflowKey(req.getCaseWorkflowKey());
         if (req.getSegmentId() != null) p.setSegmentId(req.getSegmentId());
         if (req.getProductLineId() != null) p.setProductLineId(req.getProductLineId());

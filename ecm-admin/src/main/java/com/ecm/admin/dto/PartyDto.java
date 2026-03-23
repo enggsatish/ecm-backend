@@ -69,6 +69,8 @@ public record PartyDto(
             Integer productId,
             String  productName,
             String  productCode,
+            String  status,            // ACTIVE | PENDING | REJECTED | CANCELLED
+            java.util.UUID caseId,
             Boolean isActive,
             OffsetDateTime enrolledAt
     ) {}

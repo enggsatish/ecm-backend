@@ -4,7 +4,9 @@ import com.ecm.workflow.model.dsl.WorkflowTemplateDsl;
 import com.ecm.workflow.model.entity.WorkflowDefinitionConfig;
 import com.ecm.workflow.model.entity.WorkflowTemplate;
 import com.ecm.workflow.model.entity.WorkflowTemplate.BpmnSource;
+import com.ecm.workflow.model.entity.WorkflowInstanceRecord;
 import com.ecm.workflow.repository.WorkflowDefinitionConfigRepository;
+import com.ecm.workflow.repository.WorkflowInstanceRecordRepository;
 import com.ecm.workflow.repository.WorkflowTemplateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +32,7 @@ public class WorkflowTemplateService {
     // "No WorkflowDefinitionConfig found for processKey" IllegalStateException
     // that occurs when startFromTemplate() is called by the document upload listener.
     private final WorkflowDefinitionConfigRepository definitionConfigRepo;
+    private final WorkflowInstanceRecordRepository instanceRecordRepo;
 
     // ─── CRUD ────────────────────────────────────────────────────────────────
 
@@ -45,7 +48,8 @@ public class WorkflowTemplateService {
     @Transactional
     public WorkflowTemplate create(WorkflowTemplateDsl dsl, Integer slaHours,
                                    Integer warningPct, Integer escalationHours,
-                                   String escalationGroupKey, String createdBy) {
+                                   String escalationGroupKey, List<String> tags,
+                                   String createdBy) {
         try {
             String dslJson = objectMapper.writeValueAsString(dsl);
             WorkflowTemplate template = WorkflowTemplate.builder()
@@ -57,6 +61,7 @@ public class WorkflowTemplateService {
                     .warningThresholdPct(warningPct != null ? warningPct : 80)
                     .escalationHours(escalationHours)
                     .escalationGroupKey(escalationGroupKey)
+                    .tags(tags)
                     .createdBy(createdBy)
                     .build();
             return templateRepo.save(template);
@@ -149,8 +154,9 @@ public class WorkflowTemplateService {
     @Transactional
     public WorkflowTemplate publish(Integer id) {
         WorkflowTemplate template = getById(id);
-        if (template.getStatus() == WorkflowTemplate.Status.PUBLISHED) {
-            throw new IllegalStateException("Template is already published.");
+        if (template.getStatus() == WorkflowTemplate.Status.PUBLISHED
+                && template.getFlowableDeploymentId() != null) {
+            throw new IllegalStateException("Template is already published and deployed.");
         }
 
         String bpmnXml;
@@ -175,6 +181,24 @@ public class WorkflowTemplateService {
         // These transformations ensure visual BPMN templates work correctly
         // with the ECM workflow engine, regardless of what the designer authored.
 
+        // 0. Ensure the BPMN process ID matches the template's stored processKey.
+        //    This prevents UNIQUE constraint violations when a cloned template's
+        //    BPMN XML still contains the original process ID (e.g., the bpmn-js
+        //    designer re-saved its in-memory XML after a rename).
+        if (template.getProcessKey() != null && !template.getProcessKey().isBlank()) {
+            String targetKey = template.getProcessKey();
+            // Extract current process ID from BPMN XML
+            Matcher pkMatcher = Pattern.compile("<process\\s+id=\"([^\"]+)\"").matcher(bpmnXml);
+            if (pkMatcher.find()) {
+                String currentKey = pkMatcher.group(1);
+                if (!currentKey.equals(targetKey)) {
+                    log.info("Rewriting BPMN process ID: '{}' → '{}'", currentKey, targetKey);
+                    bpmnXml = bpmnXml.replace("id=\"" + currentKey + "\"", "id=\"" + targetKey + "\"");
+                    bpmnXml = bpmnXml.replace("bpmnElement=\"" + currentKey + "\"", "bpmnElement=\"" + targetKey + "\"");
+                }
+            }
+        }
+
         // 1. Replace hardcoded candidate groups with ${candidateGroup} process variable
         //    ONLY when all userTasks use the SAME group (simple single-review workflows).
         //    Multi-role workflows (triage) intentionally use different groups per task.
@@ -196,7 +220,7 @@ public class WorkflowTemplateService {
         // 2. Inject task listeners on userTasks that don't have them
         //    - taskCreatedListener: publishes workflow.task.assigned → triggers notifications
         //    - taskCompletedListener: logs task completion for audit
-        if (!bpmnXml.contains("taskCompletedListener")) {
+        if (!bpmnXml.contains("taskCreatedListener")) {
             String taskListenerBlock =
                     "      <extensionElements>\n" +
                     "          <flowable:taskListener event=\"create\" " +
@@ -215,7 +239,7 @@ public class WorkflowTemplateService {
         }
 
         // 3. Inject ProcessEndListener on endEvents that don't have it
-        if (!bpmnXml.contains("ProcessEndListener")) {
+        if (!bpmnXml.toLowerCase().contains("processendlistener")) {
             // Match <endEvent id="..." name="..." /> (self-closing)
             Pattern endEventPattern = Pattern.compile(
                     "<endEvent\\s+id=\"([^\"]+)\"\\s+name=\"([^\"]*)\"\\s*/>");
@@ -246,7 +270,7 @@ public class WorkflowTemplateService {
         template.setFlowableDeploymentId(result.deploymentId());
         template.setFlowableProcessDefId(result.processDefinitionId());
         template.setStatus(WorkflowTemplate.Status.PUBLISHED);
-        template.setVersion(result.version());
+        // version is managed by our own counter (incremented on clone), not Flowable's
 
         WorkflowTemplate saved = templateRepo.save(template);
 
@@ -295,6 +319,137 @@ public class WorkflowTemplateService {
         return templateRepo.save(template);
     }
 
+    /**
+     * Delete a workflow template.
+     * DRAFT templates are deleted immediately.
+     * PUBLISHED/DEPRECATED templates are only deleted if no ACTIVE workflow instances exist.
+     * Also cleans up the associated WorkflowDefinitionConfig if present.
+     */
+    @Transactional
+    public void delete(Integer id) {
+        WorkflowTemplate template = getById(id);
+
+        // DRAFT — always safe to delete
+        if (template.getStatus() != WorkflowTemplate.Status.DRAFT) {
+            // Check for active instances
+            long activeCount = instanceRecordRepo.countByTemplateIdAndStatus(
+                    id, WorkflowInstanceRecord.Status.ACTIVE);
+            if (activeCount > 0) {
+                throw new IllegalStateException(
+                        "Cannot delete template — " + activeCount + " active workflow instance(s) " +
+                        "are still running. Complete or cancel them first.");
+            }
+        }
+
+        // Clean up WorkflowDefinitionConfig if one exists for this processKey
+        if (template.getProcessKey() != null) {
+            definitionConfigRepo.findByProcessKey(template.getProcessKey())
+                    .ifPresent(config -> {
+                        definitionConfigRepo.delete(config);
+                        log.info("Deleted WorkflowDefinitionConfig for processKey={}", template.getProcessKey());
+                    });
+        }
+
+        templateRepo.delete(template);
+        log.info("Deleted workflow template id={}, processKey={}, status={}",
+                id, template.getProcessKey(), template.getStatus());
+    }
+
+    /**
+     * Clone a template (any status) into a new DRAFT.
+     * Copies DSL, BPMN XML, SLA settings, and escalation config.
+     * Generates a new unique processKey to avoid UNIQUE constraint violations.
+     * The new draft has no Flowable deployment — it must be published separately.
+     */
+    @Transactional
+    public WorkflowTemplate clone(Integer sourceId, String clonedBy) {
+        WorkflowTemplate source = getById(sourceId);
+
+        // Generate a unique process key by appending a short timestamp suffix
+        String suffix = "-v" + System.currentTimeMillis() % 100000;
+        String oldKey = source.getProcessKey();
+        String newKey = oldKey != null ? oldKey + suffix : null;
+
+        // Rewrite process key in BPMN XML so publish() deploys under the new key
+        String bpmnXml = source.getBpmnXml();
+        if (bpmnXml != null && oldKey != null) {
+            bpmnXml = bpmnXml.replace(
+                    "id=\"" + oldKey + "\"",
+                    "id=\"" + newKey + "\"");
+            // Also update bpmnElement references in the diagram
+            bpmnXml = bpmnXml.replace(
+                    "bpmnElement=\"" + oldKey + "\"",
+                    "bpmnElement=\"" + newKey + "\"");
+        }
+
+        // Rewrite process key in DSL definition
+        String dslDef = source.getDslDefinition();
+        if (dslDef != null && oldKey != null) {
+            dslDef = dslDef.replace("\"" + oldKey + "\"", "\"" + newKey + "\"");
+        }
+
+        WorkflowTemplate draft = WorkflowTemplate.builder()
+                .name(source.getName() + " (copy)")
+                .processKey(newKey)
+                .dslDefinition(dslDef)
+                .bpmnXml(bpmnXml)
+                .bpmnSource(source.getBpmnSource())
+                .status(WorkflowTemplate.Status.DRAFT)
+                .version(source.getVersion() + 1)
+                .slaHours(source.getSlaHours())
+                .warningThresholdPct(source.getWarningThresholdPct())
+                .escalationHours(source.getEscalationHours())
+                .escalationGroupKey(source.getEscalationGroupKey())
+                .tags(source.getTags() != null ? new java.util.ArrayList<>(source.getTags()) : null)
+                .createdBy(clonedBy)
+                .build();
+
+        WorkflowTemplate saved = templateRepo.save(draft);
+        log.info("Cloned template id={} → new draft id={} (processKey={}) by {}",
+                sourceId, saved.getId(), newKey, clonedBy);
+        return saved;
+    }
+
+    /**
+     * Update name, process key, and/or tags for a DRAFT template.
+     */
+    @Transactional
+    public WorkflowTemplate updateMeta(Integer id, String name, String processKey,
+                                       List<String> tags) {
+        WorkflowTemplate template = getDraftOrThrow(id);
+
+        String oldKey = template.getProcessKey();
+
+        if (name != null && !name.isBlank()) {
+            template.setName(name.trim());
+        }
+
+        if (processKey != null && !processKey.isBlank()) {
+            String newKey = processKey.trim();
+
+            // Rewrite in BPMN XML
+            if (template.getBpmnXml() != null && oldKey != null) {
+                template.setBpmnXml(template.getBpmnXml()
+                        .replace("id=\"" + oldKey + "\"", "id=\"" + newKey + "\"")
+                        .replace("bpmnElement=\"" + oldKey + "\"", "bpmnElement=\"" + newKey + "\""));
+            }
+
+            // Rewrite in DSL
+            if (template.getDslDefinition() != null && oldKey != null) {
+                template.setDslDefinition(
+                        template.getDslDefinition().replace("\"" + oldKey + "\"", "\"" + newKey + "\""));
+            }
+
+            template.setProcessKey(newKey);
+        }
+
+        if (tags != null) {
+            template.setTags(tags);
+        }
+
+        return templateRepo.save(template);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private WorkflowTemplate getDraftOrThrow(Integer id) {
@@ -322,5 +477,35 @@ public class WorkflowTemplateService {
             }
         } catch (Exception ignored) { /* non-fatal */ }
         return Optional.empty();
+    }
+
+    // ─── Auto-deploy on startup ──────────────────────────────────────────────
+
+    /**
+     * Deploys any templates that are PUBLISHED in the DB but not yet deployed
+     * to Flowable (flowable_deployment_id IS NULL). This closes the bootstrap
+     * gap where init.sql seeds templates with status=PUBLISHED but the Flowable
+     * engine has no process definitions registered.
+     *
+     * Called by WorkflowAutoDeployConfig on ApplicationReadyEvent.
+     */
+    @Transactional
+    public int autoDeployPendingTemplates() {
+        List<WorkflowTemplate> pending = templateRepo.findPublishedButNotDeployed();
+        if (pending.isEmpty()) return 0;
+
+        int deployed = 0;
+        for (WorkflowTemplate template : pending) {
+            try {
+                log.info("Auto-deploying template: id={}, processKey={}, name={}",
+                        template.getId(), template.getProcessKey(), template.getName());
+                publish(template.getId());
+                deployed++;
+            } catch (Exception e) {
+                log.error("Auto-deploy failed for template id={}: {}",
+                        template.getId(), e.getMessage(), e);
+            }
+        }
+        return deployed;
     }
 }

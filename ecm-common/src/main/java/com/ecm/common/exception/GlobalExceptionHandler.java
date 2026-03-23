@@ -93,6 +93,24 @@ public class GlobalExceptionHandler {
                         "FILE_TOO_LARGE"));
     }
 
+    // ── ResponseStatusException — pass through status + message ────────────────
+
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<ApiResponse<Void>> handleResponseStatusReactive(
+            org.springframework.web.server.ResponseStatusException ex) {
+        return ResponseEntity
+                .status(ex.getStatusCode())
+                .body(ApiResponse.error(ex.getReason() != null ? ex.getReason() : ex.getMessage(), "STATUS_" + ex.getStatusCode().value()));
+    }
+
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResource(
+            org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("Resource not found: " + ex.getResourcePath(), "NOT_FOUND_002"));
+    }
+
     // ── 500 — Unexpected ───────────────────────────────────────────────────────
 
     @ExceptionHandler(Exception.class)

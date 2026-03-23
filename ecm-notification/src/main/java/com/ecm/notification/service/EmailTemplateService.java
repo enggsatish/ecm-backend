@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -72,5 +73,49 @@ public class EmailTemplateService {
             VALUES (?, ?, ?, ?)
             """, templateKey, name, subjectTemplate, bodyTemplate);
         log.info("Email template created: key={}", templateKey);
+    }
+
+    // ── Template resolution + variable substitution ──────────────────────
+
+    public record RenderedEmail(String subject, String body) {}
+
+    /**
+     * Resolves a template by key and substitutes {{variable}} placeholders.
+     * Returns null if template not found or inactive.
+     */
+    @Transactional(readOnly = true)
+    public RenderedEmail render(String templateKey, Map<String, Object> variables) {
+        var list = jdbc.query("""
+            SELECT subject_template, body_template
+            FROM ecm_core.email_templates
+            WHERE template_key = ? AND is_active = true
+            """, (rs, rowNum) -> new String[]{
+                rs.getString("subject_template"),
+                rs.getString("body_template")
+        }, templateKey);
+
+        if (list.isEmpty()) {
+            log.warn("Email template not found or inactive: {}", templateKey);
+            return null;
+        }
+
+        String subject = substituteVariables(list.get(0)[0], variables);
+        String body = substituteVariables(list.get(0)[1], variables);
+        return new RenderedEmail(subject, body);
+    }
+
+    /**
+     * Replace {{variableName}} placeholders with values from the map.
+     * Unmatched placeholders are left as-is (visible in email = easy to debug).
+     */
+    private String substituteVariables(String template, Map<String, Object> variables) {
+        if (template == null || variables == null) return template;
+        String result = template;
+        for (Map.Entry<String, Object> entry : variables.entrySet()) {
+            String placeholder = "{{" + entry.getKey() + "}}";
+            String value = entry.getValue() != null ? entry.getValue().toString() : "";
+            result = result.replace(placeholder, value);
+        }
+        return result;
     }
 }

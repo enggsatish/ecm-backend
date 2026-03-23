@@ -34,12 +34,17 @@ public class SlaBreachDetectionJob {
     @Scheduled(fixedDelayString = "${ecm.sla.check-interval-ms:300000}") // default 5 min
     @Transactional
     public void run() {
-        LocalDateTime now = LocalDateTime.now();
-        log.debug("SLA breach detection job running at {}", now);
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            log.debug("SLA breach detection job running at {}", now);
 
-        processWarnings(now);
-        processBreaches(now);
-        processEscalations(now);
+            processWarnings(now);
+            processBreaches(now);
+            processEscalations(now);
+        } catch (Exception e) {
+            log.error("SLA breach detection job failed — will retry next cycle: {}", e.getMessage(), e);
+            // Don't rethrow — let the scheduler run again next interval
+        }
     }
 
     private void processWarnings(LocalDateTime now) {
@@ -84,13 +89,18 @@ public class SlaBreachDetectionJob {
                     : null;
 
             if (escalationGroup != null) {
-                Task task = flowableTaskService.createTaskQuery()
-                        .processInstanceId(tracking.getWorkflowInstanceId().toString())
-                        .singleResult();
-                if (task != null) {
-                    flowableTaskService.deleteCandidateGroup(task.getId(), escalationGroup);
-                    flowableTaskService.addCandidateGroup(task.getId(), escalationGroup);
-                    log.info("Escalated task {} to group: {}", task.getId(), escalationGroup);
+                try {
+                    Task task = flowableTaskService.createTaskQuery()
+                            .processInstanceId(tracking.getWorkflowInstanceId().toString())
+                            .singleResult();
+                    if (task != null) {
+                        flowableTaskService.deleteCandidateGroup(task.getId(), escalationGroup);
+                        flowableTaskService.addCandidateGroup(task.getId(), escalationGroup);
+                        log.info("Escalated task {} to group: {}", task.getId(), escalationGroup);
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to escalate task for instance {}: {}",
+                            tracking.getWorkflowInstanceId(), e.getMessage());
                 }
             }
 

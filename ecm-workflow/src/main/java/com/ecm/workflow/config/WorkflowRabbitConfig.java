@@ -181,6 +181,25 @@ public class WorkflowRabbitConfig {
                 .with(FORM_SUBMITTED_RK);
     }
 
+    // ── ecm.admin consumer (case workflow cancel) ─────────────────────────
+    public static final String ADMIN_EXCHANGE        = "ecm.admin";
+    public static final String Q_CASE_WF_CANCEL      = "ecm.workflow.case.cancel";
+
+    @Bean
+    public TopicExchange adminExchangeRef() {
+        return ExchangeBuilder.topicExchange(ADMIN_EXCHANGE).durable(true).build();
+    }
+
+    @Bean
+    public Queue caseWorkflowCancelQueue() {
+        return QueueBuilder.durable(Q_CASE_WF_CANCEL).build();
+    }
+
+    @Bean
+    public Binding caseWorkflowCancelBinding(Queue caseWorkflowCancelQueue, TopicExchange adminExchangeRef) {
+        return BindingBuilder.bind(caseWorkflowCancelQueue).to(adminExchangeRef).with("case.workflow.cancel");
+    }
+
     // ── Converters ─────────────────────────────────────────────────────────
 
     @Bean
@@ -215,8 +234,18 @@ public class WorkflowRabbitConfig {
         factory.setMessageConverter(jsonMessageConverter);
         // OTEL: creates a Micrometer Observation for every message delivery
         factory.setObservationEnabled(true);
-        //factory.setMicrometerEnabled(true);
-        //factory.setObservationRegistry(observationRegistry);
+
+        // Prevent infinite requeue loop on exceptions.
+        // Failed messages go to DLQ after 3 retries (with backoff).
+        factory.setDefaultRequeueRejected(false);
+        factory.setAdviceChain(
+            org.springframework.amqp.rabbit.config.RetryInterceptorBuilder
+                .stateless()
+                .maxAttempts(3)
+                .backOffOptions(1000, 2.0, 10000) // 1s, 2s, 4s
+                .build()
+        );
+
         return factory;
     }
 }

@@ -115,8 +115,14 @@ public class DocumentServiceImpl implements DocumentService {
 
         // 4. Publish OCR event — best-effort, never rolls back upload
         publishOcrEvent(document);
-        // Publish workflow trigger — always best-effort, never blocks upload
-        publishWorkflowTriggerEvent(document);
+
+        // 5. Publish workflow trigger — skip for case checklist uploads (handled by case flow)
+        boolean skip = metadata != null && Boolean.TRUE.equals(metadata.skipWorkflow());
+        if (!skip) {
+            publishWorkflowTriggerEvent(document);
+        } else {
+            log.debug("Workflow trigger skipped for documentId={} (case checklist upload)", documentId);
+        }
 
         return documentMapper.toResponse(document);
     }

@@ -35,7 +35,7 @@ public class UserController {
      * Admin only — view any user's profile.
      */
     @GetMapping("/{subject}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     @AuditLog(event = "USER_PROFILE_VIEWED", resourceType = "USER")
     public ResponseEntity<ApiResponse<UserProfileDto>> getUserProfile(
             @PathVariable String subject) {
@@ -48,7 +48,7 @@ public class UserController {
      * Admin only — list all active users.
      */
     @GetMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     @AuditLog(event = "USER_LIST_VIEWED", resourceType = "USER")
     public ResponseEntity<ApiResponse<List<UserProfileDto>>> getAllUsers() {
         List<UserProfileDto> users =
@@ -61,7 +61,7 @@ public class UserController {
      * Admin only — deactivate a user.
      */
     @PatchMapping("/{userId}/deactivate")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'admin:users')")
     @AuditLog(event = "USER_DEACTIVATED", resourceType = "USER",
             severity = "WARN")
     public ResponseEntity<ApiResponse<Void>> deactivateUser(

@@ -37,5 +37,8 @@ public record DocumentUploadRequest(
         @Size(max = 30)  String productLineCode, // e.g. RETAIL_LOANS — used in MinIO path
 
         // ── Sprint-D: party context ───────────────────────────────────────────
-        @Size(max = 100) String partyExternalId  // soft ref → ecm_core.parties.external_id
+        @Size(max = 100) String partyExternalId,  // soft ref → ecm_core.parties.external_id
+
+        // ── Workflow control ─────────────────────────────────────────────────
+        Boolean skipWorkflow  // true = case checklist uploads; skips standalone workflow trigger
 ) {}

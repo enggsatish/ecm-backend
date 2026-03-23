@@ -22,7 +22,7 @@ public class WorkflowSlaController {
      * Returns count per SLA status for dashboard cards.
      */
     @GetMapping("/summary")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_BACKOFFICE','ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<SlaSummaryDto>> summary() {
         return ResponseEntity.ok(ApiResponse.ok(slaService.getSummary()));
     }
@@ -32,7 +32,7 @@ public class WorkflowSlaController {
      * Returns active (non-completed) SLA items ordered by deadline.
      */
     @GetMapping("/overdue")
-    @PreAuthorize("hasAnyRole('ECM_ADMIN','ECM_BACKOFFICE','ECM_REVIEWER')")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
     public ResponseEntity<ApiResponse<List<SlaOverdueItemDto>>> overdue() {
         return ResponseEntity.ok(ApiResponse.ok(slaService.getActiveItems()));
     }

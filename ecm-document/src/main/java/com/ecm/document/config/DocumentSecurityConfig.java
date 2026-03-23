@@ -60,7 +60,7 @@ public class DocumentSecurityConfig {
 
     /** Must match the header sent by DocumentPromotionClient in ecm-common. */
     private static final String INTERNAL_HEADER = "X-Internal-Service";
-    private static final String INTERNAL_VALUE  = "ecm-eforms";
+    private static final java.util.Set<String> INTERNAL_VALUES = java.util.Set.of("ecm-eforms", "ecm-admin");
 
     /**
      * Single security filter chain for all ecm-document requests.
@@ -100,7 +100,8 @@ public class DocumentSecurityConfig {
                         .requestMatchers(request ->
                                 "POST".equalsIgnoreCase(request.getMethod())
                                         && "/api/documents/upload".equals(request.getServletPath())
-                                        && INTERNAL_VALUE.equals(request.getHeader(INTERNAL_HEADER))
+                                        && request.getHeader(INTERNAL_HEADER) != null
+                                        && INTERNAL_VALUES.contains(request.getHeader(INTERNAL_HEADER))
                         ).permitAll()
 
                         // ── Everything else requires a valid Okta JWT ────────────────

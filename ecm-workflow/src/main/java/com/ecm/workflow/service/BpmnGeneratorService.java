@@ -124,6 +124,8 @@ public class BpmnGeneratorService {
                       flowable:candidateGroups="%s"
                       flowable:formFieldValidation="false">
                     <extensionElements>
+                      <flowable:taskListener event="create"
+                          delegateExpression="${taskCreatedListener}"/>
                       <flowable:taskListener event="complete"
                           delegateExpression="${taskCompletedListener}"/>
                     </extensionElements>
@@ -160,6 +162,8 @@ public class BpmnGeneratorService {
                       flowable:assignee="${initiator}"
                       flowable:formFieldValidation="false">
                     <extensionElements>
+                      <flowable:taskListener event="create"
+                          delegateExpression="${taskCreatedListener}"/>
                       <flowable:taskListener event="complete"
                           delegateExpression="${taskCompletedListener}"/>
                     </extensionElements>
@@ -193,6 +197,8 @@ public class BpmnGeneratorService {
                           flowable:candidateGroups="%s"
                           flowable:formFieldValidation="false">
                         <extensionElements>
+                          <flowable:taskListener event="create"
+                              delegateExpression="${taskCreatedListener}"/>
                           <flowable:taskListener event="complete"
                               delegateExpression="${taskCompletedListener}"/>
                         </extensionElements>
@@ -285,7 +291,7 @@ public class BpmnGeneratorService {
         }
         return String.format("""
                     <sequenceFlow id="%s" sourceRef="%s" targetRef="%s">
-                      <conditionExpression xsi:type="tFormalExpression">%s</conditionExpression>
+                      <conditionExpression>%s</conditionExpression>
                     </sequenceFlow>
                 """, id, source, target, condition);
     }

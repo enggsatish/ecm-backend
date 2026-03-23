@@ -14,6 +14,9 @@ public class TenantConfig {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String value;
 
+    @Column(name = "default_value", columnDefinition = "TEXT")
+    private String defaultValue;
+
     @Column(length = 500)
     private String description;
 
@@ -24,6 +27,8 @@ public class TenantConfig {
     public void setKey(String key) { this.key = key; }
     public String getValue() { return value; }
     public void setValue(String value) { this.value = value; }
+    public String getDefaultValue() { return defaultValue; }
+    public void setDefaultValue(String defaultValue) { this.defaultValue = defaultValue; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

@@ -192,7 +192,12 @@ public class FormSubmissionService {
         }
 
         // 8. Publish event → triggers workflow in ecm-workflow
-        eventPublisher.publishSubmitted(saved, def);
+        //    Skip for case-linked submissions — case manages its own review flow.
+        if (!req.isSkipWorkflow()) {
+            eventPublisher.publishSubmitted(saved, def);
+        } else {
+            log.info("Workflow trigger skipped for submission={} (case-linked form)", saved.getId());
+        }
 
         log.info("Submitted: id={}, formKey={}, status={}", saved.getId(), saved.getFormKey(), saved.getStatus());
         return saved;

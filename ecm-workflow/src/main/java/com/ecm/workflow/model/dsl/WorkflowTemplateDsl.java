@@ -1,5 +1,6 @@
 package com.ecm.workflow.model.dsl;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 import java.util.List;
@@ -50,6 +51,17 @@ public class WorkflowTemplateDsl {
         private String id;
         private String label;
         private String next;   // references a step.id or endState.id
+
+        /** Handles DSL outcomes as plain strings: "APPROVED" → DslOutcome(id=APPROVED) */
+        @JsonCreator
+        public static DslOutcome fromString(String value) {
+            DslOutcome o = new DslOutcome();
+            o.setId(value);
+            o.setLabel(value);
+            return o;
+        }
+
+        public DslOutcome() {}
     }
 
     @Data

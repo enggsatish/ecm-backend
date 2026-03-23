@@ -30,19 +30,19 @@ public class OcrTemplateController {
     private final OcrTemplateService service;
 
     @GetMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'ocr:trigger')")
     public ResponseEntity<ApiResponse<List<OcrTemplate>>> list() {
         return ResponseEntity.ok(ApiResponse.ok(service.listAll()));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'ocr:trigger')")
     public ResponseEntity<ApiResponse<OcrTemplate>> getById(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(service.getById(id)));
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'ocr:trigger')")
     public ResponseEntity<ApiResponse<OcrTemplate>> create(
             @RequestBody OcrTemplate template,
             @AuthenticationPrincipal Jwt jwt) {
@@ -52,7 +52,7 @@ public class OcrTemplateController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'ocr:trigger')")
     public ResponseEntity<ApiResponse<OcrTemplate>> update(
             @PathVariable Integer id,
             @RequestBody OcrTemplate template) {
@@ -60,7 +60,7 @@ public class OcrTemplateController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ECM_ADMIN')")
+    @PreAuthorize("hasPermission(null, 'ocr:trigger')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Integer id) {
         service.delete(id);
         return ResponseEntity.ok(ApiResponse.ok(null, "OCR template deactivated"));
