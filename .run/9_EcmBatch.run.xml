@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="8_EcmNotification" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+    <module name="ecm-notification" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.ecm.notification.NotificationApplication" />
+    <option name="VM_PARAMETERS" value=" -Xmx384m -Xss256k" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

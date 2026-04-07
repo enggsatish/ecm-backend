@@ -51,6 +51,12 @@ public class RouteConfig {
     @Value("${ecm.services.notification-url:http://localhost:8088}")
     private String notificationUrl;
 
+    @Value("${ecm.services.batch-url:http://localhost:8089}")
+    private String batchUrl;
+
+    @Value("${ecm.services.ai-gateway-url:http://localhost:8090}")
+    private String aiGatewayUrl;
+
     // Injected from RateLimiterConfig -- Spring-managed beans with
     // ReactiveStringRedisTemplate properly wired in.
     private final RedisRateLimiter defaultRateLimiter;
@@ -140,7 +146,10 @@ public class RouteConfig {
                         )
                         .uri(workflowUrl)
                 )
-                // Efrom fall back route.
+                // eForms route — single route for all eforms paths.
+                 // Rate limiter uses "anonymous" bucket for unauthenticated webhook requests.
+                 // The EcmRoleEnrichmentFilter bypasses /api/eforms/docusign/* paths
+                 // so they flow through without JWT.
                  .route("eforms-service", r -> r
                      .path("/api/eforms/**")
                      .filters(f -> f
@@ -184,6 +193,35 @@ public class RouteConfig {
                                         .setName("ocr-cb")
                                         .setFallbackUri("forward:/fallback/ocr")))
                         .uri(ocrUrl)
+                )
+                // -- ecm-batch: batch processing endpoints -----------------------
+                .route("batch-service", r -> r
+                        .path("/api/batch/**")
+                        .filters(f -> f
+                                .requestRateLimiter(rl -> rl
+                                        .setRateLimiter(defaultRateLimiter)
+                                        .setStatusCode(HttpStatus.TOO_MANY_REQUESTS))
+                                .circuitBreaker(cb -> cb
+                                        .setName("batch-cb")
+                                        .setFallbackUri("forward:/fallback/admin")))
+                        .uri(batchUrl)
+                )
+                // AI Gateway — chat, models, admin, webhooks
+                // X-AI-App-Id stamps ECM's tenant identity onto every call so the AI Gateway
+                // can enforce per-application allowlists, quotas, and dashboards. Stamped here
+                // (not in the frontend) so it cannot be spoofed by browser callers.
+                .route("ai-gateway", r -> r
+                        .path("/api/ai/**")
+                        .filters(f -> f
+                                .rewritePath("/api/ai/(?<segment>.*)", "/api/${segment}")
+                                .setRequestHeader("X-AI-App-Id", "ecm-chat")
+                                .requestRateLimiter(rl -> rl
+                                        .setRateLimiter(defaultRateLimiter)
+                                        .setStatusCode(HttpStatus.TOO_MANY_REQUESTS))
+                                .circuitBreaker(cb -> cb
+                                        .setName("ai-cb")
+                                        .setFallbackUri("forward:/fallback/admin")))
+                        .uri(aiGatewayUrl)
                 )
                 .build();
     }
