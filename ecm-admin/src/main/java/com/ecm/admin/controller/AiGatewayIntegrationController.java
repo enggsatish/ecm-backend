@@ -1,8 +1,11 @@
 package com.ecm.admin.controller;
 
 import com.ecm.admin.dto.AiGatewayIntegrationDto;
+import com.ecm.admin.entity.IntegrationConfig;
 import com.ecm.admin.entity.TenantConfig;
+import com.ecm.admin.repository.IntegrationConfigRepository;
 import com.ecm.admin.repository.TenantConfigRepository;
+import com.ecm.admin.service.IntegrationConfigService;
 import com.ecm.common.model.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,22 +15,33 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
- * Admin API for the AI Gateway integration — URL and HMAC webhook secret.
+ * Admin API for the AI Gateway integration — webhook URL + HMAC secret (Change 2)
+ * plus base URL, Okta service credentials, and OCR routing mode (Phase 2a).
  *
- * <p>The AI Gateway rejects unsigned webhook requests (see its
- * {@code WebhookAuthFilter}). ECM OCR's RAG push uses the HMAC secret configured
- * here to sign its outbound {@code /api/webhook/rag-ingest} calls. Rotation is
- * a two-step manual workflow:
- * <ol>
- *   <li>Admin clicks "Rotate Secret" in the AI Gateway admin UI → copies the new hex value</li>
- *   <li>Admin pastes it here → saves → OCR secret cache expires within 60 seconds</li>
- * </ol>
+ * <h3>Storage split</h3>
+ * Non-sensitive fields live in {@code ecm_admin.tenant_config}:
+ * <ul>
+ *   <li>{@code ai.gateway.webhook.url}</li>
+ *   <li>{@code ai.gateway.webhook.hmac.secret} (plaintext — legacy from Change 2)</li>
+ *   <li>{@code ai.gateway.base.url}</li>
+ *   <li>{@code ai.gateway.okta.client.id}</li>
+ *   <li>{@code ecm.ocr.route} (values: {@code direct} or {@code gateway})</li>
+ * </ul>
  *
- * <p>Reads never return the plaintext secret — only a configured flag and a masked
- * preview (last 4 chars). See {@link AiGatewayIntegrationDto} for details.
+ * The Okta client_secret lives in {@code ecm_admin.integration_configs} with
+ * {@code system_key='AI_GATEWAY_OCR'}, AES-GCM encrypted via
+ * {@link IntegrationConfigService} using the {@code ecm.master-encrypt-key} env var.
+ * This matches the DocuSign credential pattern already in use.
+ *
+ * <h3>Secret semantics</h3>
+ * Both {@code hmacSecret} and {@code oktaClientSecret} are write-only from the API:
+ * reads return only a configured flag, a masked preview (last 4 chars), and the
+ * last-updated timestamp. Sending {@code null} on write means "leave unchanged".
  */
 @RestController
 @RequestMapping("/api/admin/integrations/ai-gateway")
@@ -35,13 +49,28 @@ public class AiGatewayIntegrationController {
 
     private static final Logger log = LoggerFactory.getLogger(AiGatewayIntegrationController.class);
 
-    private static final String KEY_URL    = "ai.gateway.webhook.url";
-    private static final String KEY_SECRET = "ai.gateway.webhook.hmac.secret";
+    private static final String KEY_WEBHOOK_URL  = "ai.gateway.webhook.url";
+    private static final String KEY_HMAC_SECRET  = "ai.gateway.webhook.hmac.secret";
+    private static final String KEY_BASE_URL     = "ai.gateway.base.url";
+    private static final String KEY_OKTA_CLIENT_ID = "ai.gateway.okta.client.id";
+    private static final String KEY_OCR_ROUTE    = "ecm.ocr.route";
 
-    private final TenantConfigRepository repo;
+    private static final String INTEGRATION_SYSTEM_KEY = "AI_GATEWAY_OCR";
+    private static final String SECRET_FIELD_OKTA_CLIENT_SECRET = "okta_client_secret";
 
-    public AiGatewayIntegrationController(TenantConfigRepository repo) {
-        this.repo = repo;
+    private static final String DEFAULT_TENANT = "default";
+    private static final String DEFAULT_ROUTE  = "direct";
+
+    private final TenantConfigRepository tenantConfigRepo;
+    private final IntegrationConfigRepository integrationConfigRepo;
+    private final IntegrationConfigService integrationConfigService;
+
+    public AiGatewayIntegrationController(TenantConfigRepository tenantConfigRepo,
+                                          IntegrationConfigRepository integrationConfigRepo,
+                                          IntegrationConfigService integrationConfigService) {
+        this.tenantConfigRepo = tenantConfigRepo;
+        this.integrationConfigRepo = integrationConfigRepo;
+        this.integrationConfigService = integrationConfigService;
     }
 
     @GetMapping
@@ -56,20 +85,41 @@ public class AiGatewayIntegrationController {
     public ResponseEntity<ApiResponse<AiGatewayIntegrationDto.Response>> update(
             @RequestBody AiGatewayIntegrationDto.UpdateRequest req) {
 
-        // URL: null means "leave unchanged"; empty string means "clear"
+        // Non-sensitive fields — all in tenant_config, null = leave unchanged
         if (req.getUrl() != null) {
-            upsert(KEY_URL, req.getUrl().trim(),
-                    "AI Gateway webhook endpoint (e.g. http://localhost:8090/api/webhook/rag-ingest)");
+            upsertTenantConfig(KEY_WEBHOOK_URL, req.getUrl().trim(),
+                    "AI Gateway webhook endpoint for OCR RAG push (e.g. http://localhost:8090/api/webhook/rag-ingest)");
+        }
+        if (req.getBaseUrl() != null) {
+            upsertTenantConfig(KEY_BASE_URL, req.getBaseUrl().trim(),
+                    "AI Gateway base URL for /api/invoke calls (e.g. http://localhost:8090)");
+        }
+        if (req.getOktaClientId() != null) {
+            upsertTenantConfig(KEY_OKTA_CLIENT_ID, req.getOktaClientId().trim(),
+                    "Okta API Services client_id for ecm-ocr-pipeline service JWT");
+        }
+        if (req.getRoute() != null) {
+            String route = req.getRoute().trim().toLowerCase();
+            if (!route.equals("direct") && !route.equals("gateway")) {
+                return ResponseEntity.badRequest().body(
+                        ApiResponse.error("route must be 'direct' or 'gateway', got: " + route, "INVALID_ROUTE"));
+            }
+            upsertTenantConfig(KEY_OCR_ROUTE, route,
+                    "OCR LLM routing mode: 'direct' = direct to Ollama, 'gateway' = via AI Gateway /api/invoke");
+            log.info("OCR routing mode changed to '{}' by admin", route);
         }
 
-        // HMAC secret: null/blank means "leave unchanged" (lets admin update URL without re-entering secret).
-        // To clear, send an explicit sentinel — not supported today, add a DELETE endpoint if needed.
-        String newSecret = req.getHmacSecret();
-        if (newSecret != null && !newSecret.isBlank()) {
-            upsert(KEY_SECRET, newSecret.trim(),
-                    "HMAC-SHA256 shared secret for signing AI Gateway webhook calls (paste from AI Gateway admin UI)");
-            // Never log the actual value — just that it was rotated
+        // HMAC secret — null/blank means leave unchanged (Change 2 legacy plaintext storage)
+        if (req.getHmacSecret() != null && !req.getHmacSecret().isBlank()) {
+            upsertTenantConfig(KEY_HMAC_SECRET, req.getHmacSecret().trim(),
+                    "HMAC-SHA256 shared secret for signing AI Gateway webhook calls");
             log.info("AI Gateway webhook HMAC secret updated by admin");
+        }
+
+        // Okta client_secret — encrypted at rest in integration_configs
+        if (req.getOktaClientSecret() != null && !req.getOktaClientSecret().isBlank()) {
+            upsertOktaClientSecret(req.getOktaClientSecret().trim());
+            log.info("AI Gateway Okta client_secret updated by admin");
         }
 
         return ResponseEntity.ok(ApiResponse.ok(buildResponse(), "AI Gateway integration saved"));
@@ -77,8 +127,8 @@ public class AiGatewayIntegrationController {
 
     // ── internals ─────────────────────────────────────────────────────────────
 
-    private void upsert(String key, String value, String description) {
-        TenantConfig tc = repo.findById(key).orElseGet(() -> {
+    private void upsertTenantConfig(String key, String value, String description) {
+        TenantConfig tc = tenantConfigRepo.findById(key).orElseGet(() -> {
             TenantConfig n = new TenantConfig();
             n.setKey(key);
             return n;
@@ -88,18 +138,40 @@ public class AiGatewayIntegrationController {
             tc.setDescription(description);
         }
         tc.setUpdatedAt(OffsetDateTime.now());
-        repo.save(tc);
+        tenantConfigRepo.save(tc);
+    }
+
+    private void upsertOktaClientSecret(String plaintext) {
+        IntegrationConfig cfg = integrationConfigRepo
+                .findByTenantIdAndSystemKey(DEFAULT_TENANT, INTEGRATION_SYSTEM_KEY)
+                .orElseGet(() -> IntegrationConfig.builder()
+                        .tenantId(DEFAULT_TENANT)
+                        .systemKey(INTEGRATION_SYSTEM_KEY)
+                        .displayName("AI Gateway (OCR)")
+                        .enabled(true)
+                        .config(new HashMap<>())
+                        .secrets(new HashMap<>())
+                        .build());
+        Map<String, Object> secrets = new HashMap<>(cfg.getSecrets() != null ? cfg.getSecrets() : new HashMap<>());
+        secrets.put(SECRET_FIELD_OKTA_CLIENT_SECRET, integrationConfigService.encrypt(plaintext));
+        cfg.setSecrets(secrets);
+        cfg.setUpdatedAt(OffsetDateTime.now());
+        integrationConfigRepo.save(cfg);
     }
 
     private AiGatewayIntegrationDto.Response buildResponse() {
         AiGatewayIntegrationDto.Response out = new AiGatewayIntegrationDto.Response();
 
-        Optional<TenantConfig> urlRow = repo.findById(KEY_URL);
-        urlRow.ifPresent(tc -> out.setUrl(tc.getValue()));
+        // tenant_config fields
+        readTenantConfig(KEY_WEBHOOK_URL).ifPresent(out::setUrl);
+        readTenantConfig(KEY_BASE_URL).ifPresent(out::setBaseUrl);
+        readTenantConfig(KEY_OKTA_CLIENT_ID).ifPresent(out::setOktaClientId);
+        out.setRoute(readTenantConfig(KEY_OCR_ROUTE).orElse(DEFAULT_ROUTE));
 
-        Optional<TenantConfig> secretRow = repo.findById(KEY_SECRET);
-        if (secretRow.isPresent() && secretRow.get().getValue() != null && !secretRow.get().getValue().isBlank()) {
-            TenantConfig tc = secretRow.get();
+        // HMAC secret (tenant_config, plaintext at rest, masked on read)
+        Optional<TenantConfig> hmacRow = tenantConfigRepo.findById(KEY_HMAC_SECRET);
+        if (hmacRow.isPresent() && hmacRow.get().getValue() != null && !hmacRow.get().getValue().isBlank()) {
+            TenantConfig tc = hmacRow.get();
             out.setHmacSecretConfigured(true);
             out.setHmacSecretPreview(maskPreview(tc.getValue()));
             out.setHmacSecretUpdatedAt(tc.getUpdatedAt());
@@ -107,7 +179,28 @@ public class AiGatewayIntegrationController {
             out.setHmacSecretConfigured(false);
         }
 
+        // Okta client_secret (integration_configs, encrypted at rest, masked on read)
+        Optional<IntegrationConfig> cfgRow = integrationConfigRepo
+                .findByTenantIdAndSystemKey(DEFAULT_TENANT, INTEGRATION_SYSTEM_KEY);
+        if (cfgRow.isPresent() && cfgRow.get().getSecrets() != null
+                && cfgRow.get().getSecrets().get(SECRET_FIELD_OKTA_CLIENT_SECRET) != null) {
+            IntegrationConfig cfg = cfgRow.get();
+            out.setOktaClientSecretConfigured(true);
+            // We can't preview the ciphertext meaningfully, and decrypting just to mask leaks through logs.
+            // Show a fixed placeholder; the admin UI renders it as "configured".
+            out.setOktaClientSecretPreview("••••••••");
+            out.setOktaClientSecretUpdatedAt(cfg.getUpdatedAt());
+        } else {
+            out.setOktaClientSecretConfigured(false);
+        }
+
         return out;
+    }
+
+    private Optional<String> readTenantConfig(String key) {
+        return tenantConfigRepo.findById(key)
+                .map(TenantConfig::getValue)
+                .filter(v -> v != null && !v.isBlank());
     }
 
     /** Returns a masked form of the secret showing only the last 4 chars. */

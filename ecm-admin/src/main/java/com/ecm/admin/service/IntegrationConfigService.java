@@ -84,6 +84,9 @@ public class IntegrationConfigService {
                 str(c, "account_id"),
                 str(c, "integration_key"),
                 str(c, "impersonated_user_id"),
+                str(c, "company_name"),
+                str(c, "email_subject_template"),
+                str(c, "email_body_template"),
                 IntegrationConfigDto.masked(s.get("rsa_private_key")),
                 IntegrationConfigDto.masked(s.get("webhook_hmac_secret")),
                 cfg.getTestStatus(),
@@ -101,6 +104,9 @@ public class IntegrationConfigService {
         putIfNotNull(c, "account_id",            req.accountId());
         putIfNotNull(c, "integration_key",       req.integrationKey());
         putIfNotNull(c, "impersonated_user_id",  req.impersonatedUserId());
+        putIfNotNull(c, "company_name",           req.companyName());
+        putIfNotNull(c, "email_subject_template",  req.emailSubjectTemplate());
+        putIfNotNull(c, "email_body_template",     req.emailBodyTemplate());
         cfg.setConfig(c);
 
         // Update secrets (encrypt only if new value supplied)
@@ -184,7 +190,7 @@ public class IntegrationConfigService {
      * Encrypts a plaintext string.
      * @return "base64(iv):base64(ciphertext)"
      */
-    String encrypt(String plaintext) {
+    public String encrypt(String plaintext) {
         try {
             byte[] iv = new byte[GCM_IV_BYTES];
             new SecureRandom().nextBytes(iv);
@@ -204,7 +210,7 @@ public class IntegrationConfigService {
     /**
      * Decrypts a value produced by {@link #encrypt(String)}.
      */
-    String decrypt(String encryptedValue) {
+    public String decrypt(String encryptedValue) {
         try {
             String[] parts = encryptedValue.split(":", 2);
             if (parts.length != 2) {
