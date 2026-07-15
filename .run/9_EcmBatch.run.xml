@@ -1,8 +1,8 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="8_EcmNotification" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
-    <module name="ecm-notification" />
-    <option name="SPRING_BOOT_MAIN_CLASS" value="com.ecm.notification.NotificationApplication" />
-    <option name="VM_PARAMETERS" value=" -Xmx384m -Xss256k" />
+  <configuration default="false" name="9_EcmBatch" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+    <module name="ecm-batch" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.ecm.batch.BatchApplication" />
+    <option name="VM_PARAMETERS" value="-Xmx256m -Xss256k" />
     <method v="2">
       <option name="Make" enabled="true" />
     </method>

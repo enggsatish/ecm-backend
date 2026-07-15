@@ -10,18 +10,25 @@ import com.ecm.workflow.model.entity.WorkflowInstanceRecord.TriggerType;
 import com.ecm.workflow.model.entity.WorkflowTemplate;
 import com.ecm.workflow.repository.WorkflowDefinitionConfigRepository;
 import com.ecm.workflow.repository.WorkflowInstanceRecordRepository;
+import com.ecm.workflow.repository.WorkflowSlaTrackingRepository;
+import com.ecm.workflow.repository.WorkflowTemplateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.flowable.engine.HistoryService;
+import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
+import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.task.api.Task;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 
 /**
@@ -36,11 +43,14 @@ import java.util.*;
 @RequiredArgsConstructor
 public class WorkflowInstanceService {
 
-    // Add to existing field declarations (Lombok @RequiredArgsConstructor picks these up)
     private final RuntimeService runtimeService;
+    private final HistoryService historyService;
+    private final RepositoryService repositoryService;
     private final ObjectMapper objectMapper;
     private final WorkflowInstanceRecordRepository instanceRecordRepo;
     private final WorkflowDefinitionConfigRepository definitionConfigRepo;
+    private final WorkflowSlaTrackingRepository slaTrackingRepo;
+    private final WorkflowTemplateRepository templateRepo;
     private final TaskService  taskService;
     private final WorkflowDefinitionConfigRepository workflowDefinitionConfigRepo;
 
@@ -165,6 +175,144 @@ public class WorkflowInstanceService {
                 .orElseThrow(() -> new ResourceNotFoundException("WorkflowInstance", id));
     }
 
+    /**
+     * Returns the runtime state of a workflow instance for BPMN viewer overlays.
+     * Includes: BPMN XML, active activity IDs, completed activities, current task.
+     */
+    @Transactional(readOnly = true)
+    public WorkflowRuntimeStateDto getRuntimeState(UUID id) {
+        WorkflowInstanceRecord record = instanceRecordRepo.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("WorkflowInstance", id));
+
+        String processInstanceId = record.getProcessInstanceId();
+
+        // 1. Get BPMN XML from the template
+        String bpmnXml = null;
+        if (record.getTemplateId() != null) {
+            bpmnXml = templateRepo.findById(record.getTemplateId())
+                    .map(WorkflowTemplate::getBpmnXml)
+                    .orElse(null);
+        }
+        // Fallback: get from Flowable's repository via process definition
+        if (bpmnXml == null && processInstanceId != null) {
+            try {
+                var procInst = runtimeService.createProcessInstanceQuery()
+                        .processInstanceId(processInstanceId).singleResult();
+                if (procInst != null) {
+                    var model = repositoryService.getBpmnModel(procInst.getProcessDefinitionId());
+                    if (model != null) {
+                        var converter = new org.flowable.bpmn.converter.BpmnXMLConverter();
+                        byte[] xmlBytes = converter.convertToXML(model);
+                        bpmnXml = new String(xmlBytes, java.nio.charset.StandardCharsets.UTF_8);
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Could not fetch BPMN XML from Flowable for {}: {}", processInstanceId, e.getMessage());
+            }
+        }
+
+        // 2. Get active activity IDs (only for running instances)
+        List<String> activeActivityIds = List.of();
+        if (record.getStatus() == Status.ACTIVE || record.getStatus() == Status.INFO_REQUESTED) {
+            try {
+                activeActivityIds = runtimeService.getActiveActivityIds(processInstanceId);
+            } catch (Exception e) {
+                log.debug("Could not get active activities for {}: {}", processInstanceId, e.getMessage());
+            }
+        }
+
+        // 3. Get completed activities from Flowable history
+        List<CompletedActivityDto> completedActivities = new ArrayList<>();
+        try {
+            List<HistoricActivityInstance> history = historyService
+                    .createHistoricActivityInstanceQuery()
+                    .processInstanceId(processInstanceId)
+                    .finished()
+                    .orderByHistoricActivityInstanceEndTime().asc()
+                    .list();
+
+            for (HistoricActivityInstance hai : history) {
+                // Skip sequence flows and gateways — only show meaningful activities
+                String type = hai.getActivityType();
+                if ("sequenceFlow".equals(type) || "exclusiveGateway".equals(type)
+                        || "parallelGateway".equals(type)) continue;
+
+                completedActivities.add(new CompletedActivityDto(
+                        hai.getActivityId(),
+                        hai.getActivityName(),
+                        hai.getActivityType(),
+                        hai.getAssignee(),
+                        hai.getStartTime() != null
+                                ? hai.getStartTime().toInstant().atOffset(ZoneOffset.UTC) : null,
+                        hai.getEndTime() != null
+                                ? hai.getEndTime().toInstant().atOffset(ZoneOffset.UTC) : null
+                ));
+            }
+        } catch (Exception e) {
+            log.debug("Could not get history for {}: {}", processInstanceId, e.getMessage());
+        }
+
+        // 4. Get current task
+        CurrentTaskDto currentTask = null;
+        try {
+            List<Task> tasks = taskService.createTaskQuery()
+                    .processInstanceId(processInstanceId)
+                    .list();
+            if (!tasks.isEmpty()) {
+                Task t = tasks.getFirst();
+                List<String> groups = taskService.getIdentityLinksForTask(t.getId()).stream()
+                        .filter(il -> "candidate".equals(il.getType()))
+                        .map(il -> il.getGroupId())
+                        .filter(Objects::nonNull)
+                        .toList();
+                currentTask = new CurrentTaskDto(
+                        t.getId(), t.getName(), t.getAssignee(), groups,
+                        t.getCreateTime() != null
+                                ? t.getCreateTime().toInstant().atOffset(ZoneOffset.UTC) : null
+                );
+            }
+        } catch (Exception e) {
+            log.debug("Could not get current task for {}: {}", processInstanceId, e.getMessage());
+        }
+
+        // 5. Get selected process variables (safe subset)
+        Map<String, Object> variables = new LinkedHashMap<>();
+        try {
+            Map<String, Object> allVars = runtimeService.getVariables(processInstanceId);
+            // Only expose safe variables
+            for (String key : List.of("documentName", "decision", "comment",
+                    "docuSignEnvelopeId", "docuSignStatus", "submittedBy")) {
+                if (allVars.containsKey(key)) variables.put(key, allVars.get(key));
+            }
+        } catch (Exception e) {
+            // Process may be completed — try history
+            try {
+                var histVars = historyService.createHistoricVariableInstanceQuery()
+                        .processInstanceId(processInstanceId).list();
+                for (var hv : histVars) {
+                    if (List.of("documentName", "decision", "comment",
+                            "docuSignEnvelopeId", "docuSignStatus", "submittedBy")
+                            .contains(hv.getVariableName())) {
+                        variables.put(hv.getVariableName(), hv.getValue());
+                    }
+                }
+            } catch (Exception e2) {
+                log.debug("Could not get variables for {}: {}", processInstanceId, e2.getMessage());
+            }
+        }
+
+        return new WorkflowRuntimeStateDto(
+                record.getId(),
+                processInstanceId,
+                record.getStatus().name(),
+                bpmnXml,
+                activeActivityIds,
+                completedActivities,
+                currentTask,
+                variables
+        );
+    }
+
     // ── Update ────────────────────────────────────────────────────────────
 
     /**
@@ -185,6 +333,19 @@ public class WorkflowInstanceService {
         record.setCompletedAt(OffsetDateTime.now());
         record.setFinalComment(comment);
         instanceRecordRepo.save(record);
+
+        // Close SLA tracking — workflow is done, SLA no longer applies
+        try {
+            slaTrackingRepo.findByWorkflowInstanceId(record.getId())
+                    .ifPresent(sla -> {
+                        sla.setStatus(com.ecm.workflow.model.entity.WorkflowSlaTracking.Status.COMPLETED);
+                        sla.setCompletedAt(java.time.LocalDateTime.now());
+                        slaTrackingRepo.save(sla);
+                        log.debug("SLA tracking completed for instance {}", record.getId());
+                    });
+        } catch (Exception e) {
+            log.warn("Failed to close SLA tracking for {}: {}", record.getId(), e.getMessage());
+        }
 
         log.info("Workflow marked {}: processInstanceId={}", newStatus, processInstanceId);
     }

@@ -54,5 +54,9 @@ public interface DocumentMapper {
 
     // Sprint-D: partyExternalId — entity column added by V6 migration.
 
+    // Case linkage — populated post-query by service layer, not from entity
+    @Mapping(target = "linkedCaseId",       ignore = true)
+    @Mapping(target = "linkedCaseAssignee", ignore = true)
+
     DocumentResponse toResponse(Document document);
 }

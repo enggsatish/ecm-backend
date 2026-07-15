@@ -53,7 +53,9 @@ public class WorkflowRabbitConfig {
 
     // ── Routing keys inbound ───────────────────────────────────────────────
     public static final String DOCUMENT_UPLOADED_RK = "document.workflow.trigger";
-    public static final String FORM_SUBMITTED_RK        = "form.submitted";
+    public static final String FORM_SUBMITTED_RK    = "form.submitted";
+    public static final String FORM_SIGNED_RK       = "form.signed";
+    public static final String FORM_DECLINED_RK     = "form.sign.declined";
 
     // ── Routing keys outbound ──────────────────────────────────────────────
 
@@ -71,6 +73,10 @@ public class WorkflowRabbitConfig {
 
     /** New queue — consumes form.submitted events from ecm.eforms exchange */
     public static final String FORM_SUBMITTED_QUEUE         = "ecm.workflow.form.submitted";
+
+    /** Consumes form.signed / form.sign.declined events to resume DocuSign wait */
+    public static final String FORM_SIGNED_QUEUE            = "ecm.workflow.form.signed";
+    public static final String FORM_DECLINED_QUEUE          = "ecm.workflow.form.declined";
 
     /** Dead-letter */
     public static final String WORKFLOW_DLX                 = "ecm.workflow.dlx";
@@ -179,6 +185,36 @@ public class WorkflowRabbitConfig {
     public Binding formSubmittedBinding(Queue formSubmittedQueue, TopicExchange eformsExchangeRef) {
         return BindingBuilder.bind(formSubmittedQueue).to(eformsExchangeRef)
                 .with(FORM_SUBMITTED_RK);
+    }
+
+    // ── DocuSign signed/declined queues (resume workflow after signing) ──────
+
+    @Bean
+    public Queue formSignedQueue() {
+        return QueueBuilder.durable(FORM_SIGNED_QUEUE)
+                .deadLetterExchange(WORKFLOW_DLX)
+                .deadLetterRoutingKey(WORKFLOW_DLQ)
+                .build();
+    }
+
+    @Bean
+    public Queue formDeclinedQueue() {
+        return QueueBuilder.durable(FORM_DECLINED_QUEUE)
+                .deadLetterExchange(WORKFLOW_DLX)
+                .deadLetterRoutingKey(WORKFLOW_DLQ)
+                .build();
+    }
+
+    @Bean
+    public Binding formSignedBinding(Queue formSignedQueue, TopicExchange eformsExchangeRef) {
+        return BindingBuilder.bind(formSignedQueue).to(eformsExchangeRef)
+                .with(FORM_SIGNED_RK);
+    }
+
+    @Bean
+    public Binding formDeclinedBinding(Queue formDeclinedQueue, TopicExchange eformsExchangeRef) {
+        return BindingBuilder.bind(formDeclinedQueue).to(eformsExchangeRef)
+                .with(FORM_DECLINED_RK);
     }
 
     // ── ecm.admin consumer (case workflow cancel) ─────────────────────────

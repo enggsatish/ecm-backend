@@ -11,7 +11,12 @@ import java.math.BigDecimal;
 import java.util.*;
 
 /**
- * GLM-OCR engine plugin — sends document images to Ollama's GLM-OCR model.
+ * Vision LLM engine plugin — routes document images through the AI Gateway for OCR,
+ * classification, and field extraction. The gateway selects a vision-capable model
+ * (any model with {@code supports_vision=true} in {@code ai_config.models}).
+ *
+ * <p>The engine ID remains {@code "glm-ocr"} for backwards compatibility with existing
+ * pipeline configurations stored in tenant_config.</p>
  *
  * <h3>Capabilities:</h3>
  * <ul>
@@ -20,14 +25,16 @@ import java.util.*;
  *   <li>EXTRACT_FIELDS — extracts structured fields (name, DOB, etc.)</li>
  * </ul>
  *
- * <h3>Two modes:</h3>
+ * <h3>Two routing modes:</h3>
  * <ol>
- *   <li><b>Image mode</b>: sends actual image to GLM-OCR vision model (OCR + classify + extract)</li>
- *   <li><b>Text mode</b>: if previous engine already extracted text, sends text to
- *       a text model for classification + extraction only (cheaper, faster)</li>
+ *   <li><b>AI Gateway (primary)</b>: routes via {@code POST /api/invoke} when
+ *       {@code ecm.ocr.route=gateway} in tenant_config. Gateway picks model by
+ *       {@code supports_vision=true}. Provides model governance, usage logging, PII guard.</li>
+ *   <li><b>Direct Ollama (fallback)</b>: used only if gateway is disabled or unreachable.
+ *       Calls Ollama directly using the {@code model} config field (default: {@code glm-ocr}).</li>
  * </ol>
  *
- * <h3>Memory considerations (16 GB Mac):</h3>
+ * <h3>Fallback memory considerations (16 GB Mac):</h3>
  * <ul>
  *   <li>GLM-OCR 0.9B ≈ 2.2 GB model + ~1 GB KV cache = ~3 GB total</li>
  *   <li>{@code keep_alive=5m} — model unloaded after 5 min idle, freeing memory</li>
@@ -61,7 +68,7 @@ public class GlmOcrEngine implements OcrEnginePlugin {
     public String engineId() { return "glm-ocr"; }
 
     @Override
-    public String displayName() { return "GLM-OCR (Ollama)"; }
+    public String displayName() { return "Vision LLM (via AI Gateway)"; }
 
     @Override
     public Set<Capability> capabilities() {
@@ -92,7 +99,7 @@ public class GlmOcrEngine implements OcrEnginePlugin {
         // to direct Ollama so the document still gets processed.
         if (aiGatewayConfig.shouldRouteViaGateway()) {
             try {
-                String rawResponse = invokeViaGateway(imageBytes, contentType, ctx, model);
+                String rawResponse = invokeViaGateway(imageBytes, contentType, ctx);
                 if (rawResponse != null && !rawResponse.isBlank()) {
                     String text = flattenToPlainText(rawResponse.strip());
                     log.info("GLM-OCR: routed via AI Gateway, {} chars (raw={}), docId={}",
@@ -133,10 +140,14 @@ public class GlmOcrEngine implements OcrEnginePlugin {
 
     /**
      * Invoke the AI Gateway {@code /api/invoke} endpoint with the image bytes as a
-     * multimodal attachment. Uses TEXT response format because glm-ocr produces raw
-     * text output, not structured JSON.
+     * multimodal attachment. Uses TEXT response format because we want raw text output.
+     *
+     * <p>Model selection is intentionally NOT overridden — the gateway resolves the
+     * right vision-capable model from its per-application configuration. This lets the
+     * platform admin swap models (e.g. glm-ocr → qwen2.5-vl) from the AI Gateway admin
+     * UI without any ECM code or config change.
      */
-    private String invokeViaGateway(byte[] imageBytes, String contentType, EngineContext ctx, String model) {
+    private String invokeViaGateway(byte[] imageBytes, String contentType, EngineContext ctx) {
         String mimeType = (contentType != null && !contentType.isBlank()) ? contentType : "image/png";
         AiGatewayInvokeClient.InvokeResponse resp = aiGatewayClient.invokeVision(
                 "glm-ocr:" + ctx.documentId(),
@@ -144,7 +155,7 @@ public class GlmOcrEngine implements OcrEnginePlugin {
                 imageBytes,
                 mimeType,
                 "TEXT",       // raw text output, no JSON parsing on the gateway side
-                model);       // pass through the configured model (usually glm-ocr)
+                null);        // let the gateway pick the vision model from app config
         return resp.text();
     }
 

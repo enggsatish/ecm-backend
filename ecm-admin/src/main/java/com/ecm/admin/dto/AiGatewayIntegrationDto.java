@@ -43,6 +43,7 @@ public class AiGatewayIntegrationDto {
         private boolean oktaClientSecretConfigured;
         private String oktaClientSecretPreview;
         private OffsetDateTime oktaClientSecretUpdatedAt;
+        private String oktaScope;
 
         // Routing mode: "direct" (existing direct-to-Ollama path) or "gateway" (via AI Gateway)
         private String route;
@@ -74,6 +75,9 @@ public class AiGatewayIntegrationDto {
         public OffsetDateTime getOktaClientSecretUpdatedAt() { return oktaClientSecretUpdatedAt; }
         public void setOktaClientSecretUpdatedAt(OffsetDateTime oktaClientSecretUpdatedAt) { this.oktaClientSecretUpdatedAt = oktaClientSecretUpdatedAt; }
 
+        public String getOktaScope() { return oktaScope; }
+        public void setOktaScope(String oktaScope) { this.oktaScope = oktaScope; }
+
         public String getRoute() { return route; }
         public void setRoute(String route) { this.route = route; }
     }
@@ -85,6 +89,7 @@ public class AiGatewayIntegrationDto {
         private String baseUrl;
         private String oktaClientId;
         private String oktaClientSecret;
+        private String oktaScope;
         private String route;
 
         public String getUrl() { return url; }
@@ -102,6 +107,9 @@ public class AiGatewayIntegrationDto {
         public String getOktaClientSecret() { return oktaClientSecret; }
         public void setOktaClientSecret(String oktaClientSecret) { this.oktaClientSecret = oktaClientSecret; }
 
+        public String getOktaScope() { return oktaScope; }
+        public void setOktaScope(String oktaScope) { this.oktaScope = oktaScope; }
+
         public String getRoute() { return route; }
         public void setRoute(String route) { this.route = route; }
     }
@@ -115,6 +123,7 @@ public class AiGatewayIntegrationDto {
         private String baseUrl;
         private String oktaClientId;
         private String oktaClientSecret;
+        private String oktaScope;
         private String route;
 
         public String getBaseUrl() { return baseUrl; }
@@ -125,6 +134,9 @@ public class AiGatewayIntegrationDto {
 
         public String getOktaClientSecret() { return oktaClientSecret; }
         public void setOktaClientSecret(String oktaClientSecret) { this.oktaClientSecret = oktaClientSecret; }
+
+        public String getOktaScope() { return oktaScope; }
+        public void setOktaScope(String oktaScope) { this.oktaScope = oktaScope; }
 
         public String getRoute() { return route; }
         public void setRoute(String route) { this.route = route; }

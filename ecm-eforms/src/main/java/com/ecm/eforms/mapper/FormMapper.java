@@ -30,6 +30,10 @@ public interface FormMapper {
     // ── FormSubmission ────────────────────────────────────────────────
 
     @Mapping(target = "formDefinitionId", source = "formDefinition.id")
+    @Mapping(target = "requiresSignature", expression =
+        "java(entity.getFormDefinition() != null "
+        + "&& entity.getFormDefinition().getDocuSignConfig() != null "
+        + "&& entity.getFormDefinition().getDocuSignConfig().isRequiresSignature())")
     FormSubmissionDto toSubmissionDto(FormSubmission entity);
 
     @Mapping(target = "formName", ignore = true)

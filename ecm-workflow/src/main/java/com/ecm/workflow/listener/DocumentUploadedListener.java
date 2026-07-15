@@ -85,6 +85,15 @@ public class DocumentUploadedListener {
                         documentId, template.getName(), template.getProcessKey(),
                         configGap.getMessage());
                 return;
+            } catch (org.flowable.common.engine.api.FlowableException flowableErr) {
+                // BPMN expression error (e.g. ${candidateGroup} not set) — config issue,
+                // not a transient error. ACK to prevent retry loop. Admin must fix the
+                // BPMN template (use hardcoded candidateGroups, not expressions).
+                log.error("Flowable BPMN error for documentId={}, template='{}': {}. " +
+                                "Fix the BPMN template — expressions like ${{candidateGroup}} must be " +
+                                "replaced with hardcoded group names during template post-processing.",
+                        documentId, template.getName(), flowableErr.getMessage());
+                return;
             }
 
             if (instanceId == null) {

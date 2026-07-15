@@ -52,17 +52,25 @@ public class EFormsSecurityConfig {
     @Bean
     public SecurityFilterChain eFormsFilterChain(HttpSecurity http) throws Exception {
         http
+                .securityMatcher("/api/eforms/**", "/internal/**", "/actuator/**")
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                // CORS disabled — gateway owns CORS for all external traffic.
                 .cors(cors -> cors.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/actuator/health",
                                 "/actuator/info",
+                                "/actuator/prometheus",
                                 // DocuSign Connect webhook: authenticated by HMAC, not JWT
-                                "/api/eforms/docusign/webhook"
+                                "/api/eforms/docusign/webhook",
+                                // Internal service-to-service: called by ecm-workflow DocuSignDelegate
+                                // and ecm-admin (test connection). Not exposed via gateway.
+                                "/api/eforms/docusign/create-envelope",
+                                "/api/eforms/docusign/test-connection",
+                                // Internal service-to-service: called by ecm-batch's QR fast-path
+                                // to resolve a form's document category. Not exposed via gateway.
+                                "/api/eforms/internal/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

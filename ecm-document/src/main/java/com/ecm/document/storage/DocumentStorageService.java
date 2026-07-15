@@ -33,4 +33,17 @@ public interface DocumentStorageService {
      * Permanently remove an object from the store.
      */
     void delete(String bucket, String key);
+
+    /**
+     * Copy an object from one bucket to another (same key).
+     * Used for archive (active → archive) and restore (archive → active).
+     */
+    void copy(String sourceBucket, String sourceKey, String destBucket);
+
+    /**
+     * Store raw bytes at a specific bucket/key path (overwrites if exists).
+     * Used for replacing document content (e.g., signed PDF replacing unsigned).
+     */
+    void storeRaw(String bucket, String key, java.io.InputStream inputStream,
+                  long size, String contentType);
 }

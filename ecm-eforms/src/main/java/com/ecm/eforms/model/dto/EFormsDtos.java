@@ -111,6 +111,13 @@ public class EFormsDtos {
         /** When true, skip workflow trigger — used for case-linked form submissions
          *  where the case manages its own review flow. */
         private boolean                      skipWorkflow = false;
+        /** DocuSign signing step (only meaningful when the form's docuSignConfig
+         *  has requiresSignature=true) — who should sign, and an optional
+         *  per-submission override of the default signing-request email. */
+        private String                       signerEmail;
+        private String                       signerName;
+        private String                       emailSubjectOverride;
+        private String                       emailBodyOverride;
     }
 
     @Data
@@ -131,6 +138,7 @@ public class EFormsDtos {
         private UUID                 formDefinitionId;
         private String               formKey;
         private Integer              formVersion;
+        private FormSchema           formSchemaSnapshot;   // for read-only rendering (labels, section titles)
         private Map<String, Object>  submissionData;
         private String               status;
         private String               submittedBy;
@@ -143,6 +151,7 @@ public class EFormsDtos {
         private OffsetDateTime       docuSignCompletedAt;
         private UUID                 signedDocumentId;
         private UUID                 draftDocumentId;
+        private boolean              requiresSignature;   // from the form definition's docuSignConfig
         private String               workflowInstanceId;
         private String               assignedTo;
         private OffsetDateTime       assignedAt;

@@ -111,6 +111,29 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error("Resource not found: " + ex.getResourcePath(), "NOT_FOUND_002"));
     }
 
+    // ── 409 — Concurrent modification ──────────────────────────────────────────
+
+    @ExceptionHandler(org.springframework.orm.ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(
+            org.springframework.orm.ObjectOptimisticLockingFailureException ex) {
+        log.warn("Optimistic lock conflict: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error(
+                        "This record was modified by another user. Please refresh and try again.",
+                        "CONFLICT_001"));
+    }
+
+    // ── 400 — Invalid state transition ──────────────────────────────────────────
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException ex) {
+        log.warn("Illegal state: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ex.getMessage(), "STATE_001"));
+    }
+
     // ── 500 — Unexpected ───────────────────────────────────────────────────────
 
     @ExceptionHandler(Exception.class)

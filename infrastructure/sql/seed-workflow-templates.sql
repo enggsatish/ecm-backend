@@ -94,7 +94,7 @@ ON CONFLICT (process_key) DO NOTHING;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 2. Underwriter Review (two-step: backoffice triage → underwriter)
+-- 2. Underwriter Review (two-step: backoffice triage -> underwriter)
 -- ─────────────────────────────────────────────────────────────────────────────
 INSERT INTO ecm_workflow.workflow_templates
     (name, description, process_key, dsl_definition, bpmn_xml, bpmn_source, status, version, is_default, sla_hours, warning_threshold_pct)
@@ -233,16 +233,16 @@ ON CONFLICT (process_key) DO NOTHING;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 3. Form Submission → Admin Triage → Conditional Review
+-- 3. Form Submission -> Admin Triage -> Conditional Review
 --
---    Form Filled → Admin Triage (ECM_ADMIN)
---      ├─ TO_BACKOFFICE → Backoffice Review (ECM_BACKOFFICE) → Reviewer Approval (ECM_REVIEWER)
---      └─ TO_REVIEWER   → Reviewer Approval (ECM_REVIEWER)
+--    Form Filled -> Admin Triage (ECM_ADMIN)
+--      ├─ TO_BACKOFFICE -> Backoffice Review (ECM_BACKOFFICE) -> Reviewer Approval (ECM_REVIEWER)
+--      └─ TO_REVIEWER   -> Reviewer Approval (ECM_REVIEWER)
 --
 --    Reviewer outcomes:
---      ├─ APPROVED         → End Approved
---      ├─ REJECTED         → End Rejected
---      └─ ADDITIONAL_DOCS  → Backoffice Review (loop back for more documents)
+--      ├─ APPROVED         -> End Approved
+--      ├─ REJECTED         -> End Rejected
+--      └─ ADDITIONAL_DOCS  -> Backoffice Review (loop back for more documents)
 -- ─────────────────────────────────────────────────────────────────────────────
 INSERT INTO ecm_workflow.workflow_templates
     (name, description, process_key, dsl_definition, bpmn_xml, bpmn_source, status, version, is_default, sla_hours, warning_threshold_pct)
@@ -280,12 +280,12 @@ VALUES (
     <sequenceFlow id="flow_triage_gw" sourceRef="admin_triage" targetRef="gw_triage" />
     <exclusiveGateway id="gw_triage" name="Routing Decision" />
 
-    <!-- Route A: Admin → Backoffice (also handles REJECTED/PASS from standard UI actions) -->
+    <!-- Route A: Admin -> Backoffice (also handles REJECTED/PASS from standard UI actions) -->
     <sequenceFlow id="flow_to_backoffice" sourceRef="gw_triage" targetRef="backoffice_review">
       <conditionExpression>${decision == ''TO_BACKOFFICE'' || decision == ''REJECTED'' || decision == ''PASS''}</conditionExpression>
     </sequenceFlow>
 
-    <!-- Route B: Admin → Reviewer directly (APPROVED from standard UI = route to reviewer) -->
+    <!-- Route B: Admin -> Reviewer directly (APPROVED from standard UI = route to reviewer) -->
     <sequenceFlow id="flow_to_reviewer" sourceRef="gw_triage" targetRef="reviewer_approval">
       <conditionExpression>${decision == ''TO_REVIEWER'' || decision == ''APPROVED''}</conditionExpression>
     </sequenceFlow>
@@ -318,17 +318,17 @@ VALUES (
     <sequenceFlow id="flow_reviewer_gw" sourceRef="reviewer_approval" targetRef="gw_reviewer" />
     <exclusiveGateway id="gw_reviewer" name="Reviewer Decision" />
 
-    <!-- Approved → End -->
+    <!-- Approved -> End -->
     <sequenceFlow id="flow_rv_approved" sourceRef="gw_reviewer" targetRef="end_approved">
       <conditionExpression>${decision == ''APPROVED''}</conditionExpression>
     </sequenceFlow>
 
-    <!-- Rejected → End -->
+    <!-- Rejected -> End -->
     <sequenceFlow id="flow_rv_rejected" sourceRef="gw_reviewer" targetRef="end_rejected">
       <conditionExpression>${decision == ''REJECTED''}</conditionExpression>
     </sequenceFlow>
 
-    <!-- Additional Docs → Loop back to Backoffice -->
+    <!-- Additional Docs -> Loop back to Backoffice -->
     <sequenceFlow id="flow_rv_additional" sourceRef="gw_reviewer" targetRef="backoffice_review">
       <conditionExpression>${decision == ''ADDITIONAL_DOCS''}</conditionExpression>
     </sequenceFlow>
@@ -402,27 +402,27 @@ VALUES (
         <omgdi:waypoint x="420" y="268" />
       </bpmndi:BPMNEdge>
 
-      <!-- Admin → Backoffice (down) -->
+      <!-- Admin -> Backoffice (down) -->
       <bpmndi:BPMNEdge id="flow_to_backoffice_di" bpmnElement="flow_to_backoffice">
         <omgdi:waypoint x="445" y="293" />
         <omgdi:waypoint x="445" y="380" />
         <omgdi:waypoint x="530" y="380" />
       </bpmndi:BPMNEdge>
 
-      <!-- Admin → Reviewer (straight) -->
+      <!-- Admin -> Reviewer (straight) -->
       <bpmndi:BPMNEdge id="flow_to_reviewer_di" bpmnElement="flow_to_reviewer">
         <omgdi:waypoint x="470" y="268" />
         <omgdi:waypoint x="730" y="268" />
       </bpmndi:BPMNEdge>
 
-      <!-- Backoffice → Reviewer -->
+      <!-- Backoffice -> Reviewer -->
       <bpmndi:BPMNEdge id="flow_bo_to_reviewer_di" bpmnElement="flow_bo_to_reviewer">
         <omgdi:waypoint x="690" y="380" />
         <omgdi:waypoint x="810" y="380" />
         <omgdi:waypoint x="810" y="308" />
       </bpmndi:BPMNEdge>
 
-      <!-- Reviewer → Gateway -->
+      <!-- Reviewer -> Gateway -->
       <bpmndi:BPMNEdge id="flow_reviewer_gw_di" bpmnElement="flow_reviewer_gw">
         <omgdi:waypoint x="890" y="268" />
         <omgdi:waypoint x="960" y="268" />
@@ -442,7 +442,7 @@ VALUES (
         <omgdi:waypoint x="1090" y="338" />
       </bpmndi:BPMNEdge>
 
-      <!-- Additional Docs → loop back to Backoffice -->
+      <!-- Additional Docs -> loop back to Backoffice -->
       <bpmndi:BPMNEdge id="flow_rv_additional_di" bpmnElement="flow_rv_additional">
         <omgdi:waypoint x="960" y="268" />
         <omgdi:waypoint x="940" y="450" />

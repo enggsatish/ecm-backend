@@ -5,15 +5,11 @@ import { test, expect } from '../fixtures/auth.fixture.js'
 
 test.describe('Session Management', () => {
 
-  test('Authenticated page loads without redirect to Okta', async ({ adminPage }) => {
+  test('Authenticated page stays on localhost', async ({ adminPage }) => {
     await adminPage.goto('/dashboard')
-    await adminPage.waitForLoadState('networkidle')
-    // Wait a moment for any redirects to settle
-    await adminPage.waitForTimeout(3000)
-
-    const url = adminPage.url()
-    // Should be on dashboard, not Okta
-    expect(url).toContain('localhost')
+    await adminPage.waitForTimeout(5000)
+    expect(adminPage.url()).toContain('localhost')
+    await expect(adminPage.locator('aside')).toBeVisible({ timeout: 15_000 })
   })
 
   test('API requests include Authorization header', async ({ adminPage }) => {
@@ -27,32 +23,30 @@ test.describe('Session Management', () => {
     })
 
     await adminPage.goto('/dashboard')
-    await adminPage.waitForLoadState('networkidle')
-    // Wait for API calls to fire
-    await adminPage.waitForTimeout(5000)
+    await adminPage.waitForTimeout(8000) // Wait for API calls to fire
 
     expect(authHeaderSeen).toBeTruthy()
   })
 
-  test('Session expired event triggers modal', async ({ adminPage }) => {
+  test('Session expired event shows modal', async ({ adminPage }) => {
     await adminPage.goto('/dashboard')
-    await adminPage.waitForLoadState('networkidle')
-    await adminPage.waitForTimeout(2000)
+    await adminPage.waitForTimeout(5000)
+    // Ensure page is loaded
+    await expect(adminPage.locator('aside')).toBeVisible({ timeout: 15_000 })
 
-    // Simulate session expired by dispatching the custom event
+    // Fire the custom session expired event
     await adminPage.evaluate(() => {
       window.dispatchEvent(new CustomEvent('ecm:session-expired'))
     })
+    await adminPage.waitForTimeout(1000)
 
-    // Modal should appear
     await expect(adminPage.getByText('Session Expired')).toBeVisible({ timeout: 5000 })
     await expect(adminPage.getByRole('button', { name: /sign in again/i })).toBeVisible()
   })
 
   test('Access token exists in session storage', async ({ adminPage }) => {
     await adminPage.goto('/dashboard')
-    await adminPage.waitForLoadState('networkidle')
-    await adminPage.waitForTimeout(2000)
+    await adminPage.waitForTimeout(5000)
 
     const hasToken = await adminPage.evaluate(() => {
       const storage = sessionStorage.getItem('okta-token-storage')

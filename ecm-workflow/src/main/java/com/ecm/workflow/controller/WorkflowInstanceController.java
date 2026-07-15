@@ -129,6 +129,16 @@ public class WorkflowInstanceController {
         return ResponseEntity.ok(ApiResponse.ok(workflowInstanceService.getById(id)));
     }
 
+    /**
+     * Returns runtime state for BPMN viewer overlays: BPMN XML, active/completed
+     * activities, current task, and selected process variables.
+     */
+    @GetMapping("/{id}/runtime-state")
+    @PreAuthorize("hasPermission(null, 'workflow:view')")
+    public ResponseEntity<ApiResponse<WorkflowRuntimeStateDto>> getRuntimeState(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(workflowInstanceService.getRuntimeState(id)));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasPermission(null, 'workflow:admin')")
     @AuditLog(event = "WORKFLOW_CANCELLED", resourceType = "WORKFLOW", severity = "WARN")

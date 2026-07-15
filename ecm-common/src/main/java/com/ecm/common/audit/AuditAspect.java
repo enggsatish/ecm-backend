@@ -43,6 +43,15 @@ public class AuditAspect {
             sessionId     = jwt.getClaimAsString("sid"); // Okta session ID claim
         }
 
+        // Fallback for internal service-to-service calls (no JWT)
+        if (userEmail == null) {
+            String internalService = extractHeader("X-Internal-Service");
+            if (internalService != null && !internalService.isBlank()) {
+                userEmail     = "system:" + internalService;
+                entraObjectId = internalService;
+            }
+        }
+
         String ip         = extractIp();
         String userAgent  = extractUserAgent();
         String resourceId = resolveResourceId(auditLog, pjp);
@@ -109,6 +118,14 @@ public class AuditAspect {
             var attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attrs == null) return null;
             return attrs.getRequest().getHeader("User-Agent");
+        } catch (Exception e) { return null; }
+    }
+
+    private String extractHeader(String headerName) {
+        try {
+            var attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs == null) return null;
+            return attrs.getRequest().getHeader(headerName);
         } catch (Exception e) { return null; }
     }
 }

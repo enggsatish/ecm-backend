@@ -187,4 +187,34 @@ public class WorkflowDtos {
             String comment,
             java.time.OffsetDateTime createdAt
     ) {}
+
+    // ── Runtime state DTO (for BPMN viewer overlays) ────────────────────────
+
+    public record WorkflowRuntimeStateDto(
+            UUID workflowInstanceId,
+            String processInstanceId,
+            String status,
+            String bpmnXml,
+            List<String> activeActivityIds,
+            List<CompletedActivityDto> completedActivities,
+            CurrentTaskDto currentTask,
+            java.util.Map<String, Object> processVariables
+    ) {}
+
+    public record CompletedActivityDto(
+            String activityId,
+            String activityName,
+            String activityType,
+            String assignee,
+            OffsetDateTime startTime,
+            OffsetDateTime endTime
+    ) {}
+
+    public record CurrentTaskDto(
+            String taskId,
+            String taskName,
+            String assignee,
+            List<String> candidateGroups,
+            OffsetDateTime createdAt
+    ) {}
 }

@@ -9,6 +9,7 @@ import org.springframework.boot.autoconfigure.elasticsearch.ElasticsearchClientA
 import org.springframework.boot.autoconfigure.elasticsearch.ElasticsearchRestClientAutoConfiguration;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * ECM OCR Service — port 8087.
@@ -36,6 +37,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
         }
 )
 @EnableAsync
+@EnableScheduling
 public class OcrApplication {
     public static void main(String[] args) {
         SpringApplication.run(OcrApplication.class, args);

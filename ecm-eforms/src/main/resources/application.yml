@@ -69,6 +69,8 @@ okta:
     audience: ${OKTA_AUDIENCE:api://sso-default}
 
 ecm:
+  # Must match the key used by ecm-admin for encrypting integration secrets
+  master-encrypt-key: ${MASTER_ENCRYPT_KEY:b5+BMrlFk333DFKoF2Sl1GJpeRc6KbfHcv1rp9WC9gY=}
   security:
     allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:4200}
   eforms:

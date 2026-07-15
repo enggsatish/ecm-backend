@@ -34,6 +34,7 @@ public class InternalAiGatewayController {
 
     private static final String KEY_BASE_URL       = "ai.gateway.base.url";
     private static final String KEY_OKTA_CLIENT_ID = "ai.gateway.okta.client.id";
+    private static final String KEY_OKTA_SCOPE     = "ai.gateway.okta.scope";
     private static final String KEY_OCR_ROUTE      = "ecm.ocr.route";
 
     private static final String INTEGRATION_SYSTEM_KEY = "AI_GATEWAY_OCR";
@@ -76,6 +77,11 @@ public class InternalAiGatewayController {
                 .map(TenantConfig::getValue)
                 .filter(v -> v != null && !v.isBlank())
                 .ifPresent(out::setOktaClientId);
+
+        tenantConfigRepo.findById(KEY_OKTA_SCOPE)
+                .map(TenantConfig::getValue)
+                .filter(v -> v != null && !v.isBlank())
+                .ifPresent(out::setOktaScope);
 
         out.setRoute(tenantConfigRepo.findById(KEY_OCR_ROUTE)
                 .map(TenantConfig::getValue)

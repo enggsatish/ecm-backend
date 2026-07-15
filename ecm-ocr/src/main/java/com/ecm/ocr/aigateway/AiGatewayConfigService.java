@@ -95,12 +95,14 @@ public class AiGatewayConfigService {
         String baseUrl       = str(raw.get("baseUrl"));
         String oktaClientId  = str(raw.get("oktaClientId"));
         String oktaClientSec = str(raw.get("oktaClientSecret"));
+        String oktaScope     = str(raw.get("oktaScope"));
         String route         = str(raw.get("route"));
         return new CachedConfig(
                 route != null ? route : "direct",
                 baseUrl,
                 oktaClientId,
-                oktaClientSec);
+                oktaClientSec,
+                oktaScope);
     }
 
     private static String str(Object v) {
@@ -116,18 +118,22 @@ public class AiGatewayConfigService {
         private final String baseUrl;
         private final String oktaClientId;
         private final String oktaClientSecret;
+        private final String oktaScope;
 
-        public CachedConfig(String route, String baseUrl, String oktaClientId, String oktaClientSecret) {
+        public CachedConfig(String route, String baseUrl, String oktaClientId,
+                            String oktaClientSecret, String oktaScope) {
             this.route = route;
             this.baseUrl = baseUrl;
             this.oktaClientId = oktaClientId;
             this.oktaClientSecret = oktaClientSecret;
+            this.oktaScope = oktaScope;
         }
 
         public String route()            { return route; }
         public String baseUrl()          { return baseUrl; }
         public String oktaClientId()     { return oktaClientId; }
         public String oktaClientSecret() { return oktaClientSecret; }
+        public String oktaScope()        { return oktaScope; }
 
         public boolean hasServiceCredentials() {
             return oktaClientId != null && !oktaClientId.isBlank()
@@ -135,7 +141,7 @@ public class AiGatewayConfigService {
         }
 
         public static CachedConfig disabled() {
-            return new CachedConfig("direct", null, null, null);
+            return new CachedConfig("direct", null, null, null, null);
         }
     }
 }

@@ -2,33 +2,47 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# ── Dev mode: services run on host machine (IntelliJ), not in Docker.
+# Use host.docker.internal to reach host from inside Docker container.
+# For production (all services in Docker/k8s), switch back to service names.
+
 scrape_configs:
   - job_name: 'ecm-gateway'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['ecm-gateway:8080']
+      - targets: ['host.docker.internal:8080']
 
-  - job_name: 'ecm-admin'
+  - job_name: 'ecm-identity'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['ecm-admin:8081']
+      - targets: ['host.docker.internal:8081']
 
   - job_name: 'ecm-document'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['ecm-document:8082']
+      - targets: ['host.docker.internal:8082']
 
   - job_name: 'ecm-workflow'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['ecm-workflow:8083']
+      - targets: ['host.docker.internal:8083']
 
   - job_name: 'ecm-eforms'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['ecm-eforms:8084']
+      - targets: ['host.docker.internal:8084']
 
   - job_name: 'ecm-notification'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['ecm-notification:8085']
+      - targets: ['host.docker.internal:8088']
+
+  - job_name: 'ecm-admin'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['host.docker.internal:8086']
+
+  - job_name: 'ecm-ocr'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['host.docker.internal:8087']

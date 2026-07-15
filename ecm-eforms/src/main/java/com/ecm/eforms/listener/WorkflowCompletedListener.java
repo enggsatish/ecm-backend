@@ -81,17 +81,34 @@ public class WorkflowCompletedListener {
             }
 
             if ("APPROVED".equalsIgnoreCase(decision)) {
-                // FIX 1: setStatus takes String, not FormSubmission.Status enum
-                submission.setStatus("APPROVED");
+                // If the submission is already PENDING_SIGNATURE (DocuSign envelope created
+                // by a workflow service task before the workflow completed), preserve that status.
+                // Otherwise, set to APPROVED.
+                boolean pendingSignature = "PENDING_SIGNATURE".equals(submission.getStatus());
+                if (!pendingSignature) {
+                    submission.setStatus("APPROVED");
+                }
                 submission.setReviewNotes(comment);
-                // FIX 2: reviewedAt is OffsetDateTime, not Instant
                 submission.setReviewedAt(OffsetDateTime.now());
                 submissionRepository.save(submission);
 
                 // Promote to a Document so it appears in the document list
-                documentCreationService.createFromApprovedSubmission(submission);
+                UUID docId = documentCreationService.createFromApprovedSubmission(submission);
 
-                log.info("FormSubmission {} APPROVED — document promotion triggered", submissionId);
+                // If DocuSign is pending, update the newly created document to PENDING_SIGNATURE
+                if (pendingSignature && docId != null) {
+                    try {
+                        documentCreationService.updateDocumentStatus(docId, "PENDING_SIGNATURE");
+                        log.info("FormSubmission {} document {} set to PENDING_SIGNATURE",
+                                submissionId, docId);
+                    } catch (Exception e) {
+                        log.warn("Failed to set PENDING_SIGNATURE on document {}: {}",
+                                docId, e.getMessage());
+                    }
+                }
+
+                log.info("FormSubmission {} {} — document promotion triggered",
+                        submissionId, pendingSignature ? "PENDING_SIGNATURE (preserved)" : "APPROVED");
 
             } else if ("REJECTED".equalsIgnoreCase(decision)) {
                 // FIX 1 & 2 same corrections

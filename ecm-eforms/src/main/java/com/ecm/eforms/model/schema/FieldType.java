@@ -21,8 +21,13 @@ public enum FieldType {
     CHECKBOX_GROUP,     // multi-select checkboxes
     // ── Layout ─────────────────────────────────────────
     SECTION_HEADER,
-    PARAGRAPH,          // read-only text / instructions
+    PARAGRAPH,          // read-only text / instructions (block, full-width)
+    LABEL,              // inline static text — respects colSpan, flows in grid row
     DIVIDER,
+    // ── eSign ────────────────────────────────────────────
+    SIGNATURE,          // DocuSign signature placeholder — renders anchor in PDF
+    INITIALS,           // DocuSign initials placeholder — renders anchor in PDF
+    SIGNER_EMAIL,       // Email input — DocuSign uses this as the recipient address
     // ── Phase 2 ────────────────────────────────────────
     DATE_RANGE,
     CURRENCY,

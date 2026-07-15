@@ -169,7 +169,8 @@ public class TimelineService {
         try {
             List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT form_key, status, submitted_by_name, submitted_by,
-                       submitted_at, reviewed_by, reviewed_at, review_notes
+                       submitted_at, reviewed_by, reviewed_at, review_notes,
+                       docusign_envelope_id, docusign_status, docusign_completed_at
                 FROM ecm_forms.form_submissions WHERE id = ?::uuid
                 """, submissionId);
 
@@ -195,6 +196,54 @@ public class TimelineService {
                             status,
                             ts(row.get("reviewed_at"))
                     ));
+                }
+
+                // DocuSign events
+                String envelopeId = str(row.get("docusign_envelope_id"));
+                String docuSignStatus = str(row.get("docusign_status"));
+                if (envelopeId != null && !envelopeId.isBlank()) {
+                    // Sent for signature event — approximate timestamp from reviewed_at or submitted_at
+                    OffsetDateTime sentAt = ts(row.get("reviewed_at")) != null
+                            ? ts(row.get("reviewed_at"))
+                            : ts(row.get("submitted_at"));
+                    events.add(new TimelineEvent(
+                            "DOCUSIGN_SENT",
+                            "Sent for signature via DocuSign",
+                            "system",
+                            "Envelope: " + envelopeId.substring(0, Math.min(8, envelopeId.length())) + "...",
+                            "PENDING_SIGNATURE",
+                            sentAt
+                    ));
+
+                    // Completion events
+                    if ("completed".equalsIgnoreCase(docuSignStatus)) {
+                        events.add(new TimelineEvent(
+                                "DOCUSIGN_SIGNED",
+                                "Document signed via DocuSign",
+                                str(row.get("submitted_by")),
+                                null,
+                                "SIGNED",
+                                ts(row.get("docusign_completed_at"))
+                        ));
+                    } else if ("declined".equalsIgnoreCase(docuSignStatus)) {
+                        events.add(new TimelineEvent(
+                                "DOCUSIGN_DECLINED",
+                                "Signature declined",
+                                str(row.get("submitted_by")),
+                                null,
+                                "SIGN_DECLINED",
+                                ts(row.get("docusign_completed_at"))
+                        ));
+                    } else if ("voided".equalsIgnoreCase(docuSignStatus)) {
+                        events.add(new TimelineEvent(
+                                "DOCUSIGN_VOIDED",
+                                "Signing envelope voided",
+                                "system",
+                                null,
+                                "VOIDED",
+                                ts(row.get("docusign_completed_at"))
+                        ));
+                    }
                 }
             }
         } catch (Exception e) {
@@ -285,20 +334,25 @@ public class TimelineService {
                 """, String.class, documentId);
         } catch (Exception ignored) {}
 
-        // 2. Match via document name → submission ID pattern
-        // Documents created from forms have names like "form-key — shortId"
+        // 2. Match via original_filename → submission ID pattern
+        // Documents created from forms have filenames like "form-key-{submissionId}.pdf"
         try {
-            String docName = jdbc.queryForObject(
-                    "SELECT name FROM ecm_core.documents WHERE id = ?",
+            String filename = jdbc.queryForObject(
+                    "SELECT original_filename FROM ecm_core.documents WHERE id = ?",
                     String.class, documentId);
-            if (docName != null && docName.contains("\u2014")) {
-                // Extract the short submission ID after " — " (em dash)
-                String shortId = docName.substring(docName.lastIndexOf("\u2014") + 1).trim();
-                if (shortId.length() >= 8) {
+            if (filename != null) {
+                // Extract UUID from filename pattern: "form-key-{uuid}.pdf"
+                // Find the last UUID-like segment (8-4-4-4-12 hex pattern)
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+                        .matcher(filename);
+                String submissionId = null;
+                while (m.find()) submissionId = m.group(1); // last UUID in filename
+                if (submissionId != null) {
                     return jdbc.queryForObject("""
                         SELECT process_instance_id FROM ecm_workflow.workflow_instance_records
-                        WHERE submission_id LIKE ? LIMIT 1
-                        """, String.class, shortId + "%");
+                        WHERE submission_id = ? LIMIT 1
+                        """, String.class, submissionId);
                 }
             }
         } catch (Exception ignored) {}

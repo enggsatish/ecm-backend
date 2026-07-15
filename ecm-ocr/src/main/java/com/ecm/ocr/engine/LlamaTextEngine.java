@@ -11,21 +11,20 @@ import java.math.BigDecimal;
 import java.util.*;
 
 /**
- * Llama 3.2 text engine — classifies documents and extracts fields from OCR text.
+ * Text classify+extract engine ({@code engineId="llama-text"}) — classifies documents
+ * and extracts fields from OCR text produced by a prior engine (vision OCR or RapidOCR).
  *
- * <p>This is NOT a vision model. It receives text extracted by a prior engine
- * (GLM-OCR or RapidOCR) and uses Llama 3.2's instruction-following ability to:
- * <ul>
- *   <li>Classify the document into a category</li>
- *   <li>Extract structured fields (name, DOB, document number, etc.)</li>
- *   <li>Return valid JSON (Llama 3.2 is good at structured output)</li>
- * </ul>
+ * <p>This is NOT a vision model — it works on already-extracted text. Like
+ * {@link GlmOcrEngine}, model selection is NOT hardcoded here: when AI Gateway
+ * routing is enabled ({@code ecm.ocr.route=gateway}), the gateway resolves
+ * whichever model is configured for the {@code ecm-classification} application in
+ * its own admin UI (see {@code ai_config.models} /
+ * {@code tenant_application_model_scope} in the AI Gateway's database) — it is
+ * NOT necessarily Llama 3.2 despite the class/engine name, which predates gateway
+ * routing. Falls back to direct Ollama (using the {@code model} config field,
+ * default {@code llama3.2:3b}) only if the gateway is disabled or unreachable.
  *
- * <p>Pipeline position: after GLM-OCR (text extraction), before Azure (fallback).</p>
- *
- * <h3>Memory (16 GB Mac):</h3>
- * <p>Llama 3.2 3B ≈ 3.5 GB loaded. Ollama auto-unloads GLM-OCR before loading this.
- * Sequential, not concurrent — pipeline processes one document at a time.</p>
+ * <p>Pipeline position: after the vision OCR step (text extraction), before Azure (fallback).</p>
  */
 @Slf4j
 @Component
@@ -36,6 +35,15 @@ public class LlamaTextEngine implements OcrEnginePlugin {
     private final ObjectMapper objectMapper;
     private final AiGatewayConfigService aiGatewayConfig;
     private final AiGatewayInvokeClient aiGatewayClient;
+
+    /** Echoed prompt-example values to discard — kept in sync with GlmPromptBuilder's example. */
+    private static final Set<String> PLACEHOLDER_VALUES = Set.of(
+            "null", "value", "john smith", "mary ann jane smith",
+            "mary", "ann jane", "smith", "1990-01-15", "2028-06-30", "a1234567");
+
+    /** Always allowed regardless of category field list — needed for name synthesis. */
+    private static final Set<String> NAME_SYNTHESIS_FIELDS = Set.of(
+            "full_name", "first_name", "middle_name", "last_name");
 
     public LlamaTextEngine(OllamaClient ollamaClient,
                            GlmPromptBuilder promptBuilder,
@@ -53,7 +61,7 @@ public class LlamaTextEngine implements OcrEnginePlugin {
     public String engineId() { return "llama-text"; }
 
     @Override
-    public String displayName() { return "Llama 3.2 (Classify + Extract)"; }
+    public String displayName() { return "Text Classify + Extract (via AI Gateway)"; }
 
     @Override
     public Set<Capability> capabilities() {
@@ -82,7 +90,7 @@ public class LlamaTextEngine implements OcrEnginePlugin {
         // so the document still gets processed. The fallback is observable via WARN log lines.
         if (aiGatewayConfig.shouldRouteViaGateway()) {
             try {
-                String rawResponse = invokeViaGateway(prompt, ctx, model);
+                String rawResponse = invokeViaGateway(prompt, ctx);
                 if (rawResponse != null && !rawResponse.isBlank()) {
                     log.info("Llama-text: routed via AI Gateway, responseLen={}, docId={}",
                             rawResponse.length(), ctx.documentId());
@@ -121,15 +129,18 @@ public class LlamaTextEngine implements OcrEnginePlugin {
      * Invoke the AI Gateway {@code /api/invoke} endpoint with the rendered prompt.
      * Returns the raw JSON-string model output (to be parsed by {@link #parseResponse}
      * exactly as the direct-Ollama path does).
+     *
+     * <p>Model selection is intentionally NOT overridden — the gateway resolves the
+     * default text model from its per-application configuration. This lets the platform
+     * admin swap models (e.g. qwen2.5:7b → qwen2.5:14b) from the AI Gateway admin UI
+     * without any ECM code or config change.
      */
-    private String invokeViaGateway(String prompt, EngineContext ctx, String model) {
+    private String invokeViaGateway(String prompt, EngineContext ctx) {
         AiGatewayInvokeClient.InvokeResponse resp = aiGatewayClient.invokeText(
                 "llama-text:" + ctx.documentId(),
                 prompt,
                 "JSON",           // we want the gateway to parse JSON for us
-                model);           // pass the configured model as the override
-        // Prefer the raw text field; parseResponse() can handle either.
-        // The parsed tree is available in resp.parsed() if we want structured access later.
+                null);            // let the gateway pick the text model from app config
         return resp.text();
     }
 
@@ -161,23 +172,37 @@ public class LlamaTextEngine implements OcrEnginePlugin {
                         .setScale(2, java.math.RoundingMode.HALF_UP);
             }
 
-            // Fields
+            // Fields — filter out echoed prompt placeholders and fields the model
+            // invented but was never asked for (e.g. a hallucinated "donor_name"
+            // from an organ-donor icon on a driver's license).
+            String effectiveCategory = ctx.categoryCode() != null ? ctx.categoryCode() : category;
+            List<String> requestedFields = promptBuilder.getFieldsForCategory(effectiveCategory);
+            Set<String> allowedFields = requestedFields.isEmpty() ? null : requestedFields.stream()
+                    .map(f -> f.toLowerCase(Locale.ROOT))
+                    .collect(java.util.stream.Collectors.toSet());
+
             Map<String, Object> fields = new LinkedHashMap<>();
             JsonNode fieldsNode = root.path("fields");
             if (fieldsNode.isObject()) {
                 fieldsNode.fields().forEachRemaining(entry -> {
+                    String key = entry.getKey();
                     JsonNode val = entry.getValue();
+
+                    boolean isAllowed = allowedFields == null
+                            || allowedFields.contains(key.toLowerCase(Locale.ROOT))
+                            || NAME_SYNTHESIS_FIELDS.contains(key.toLowerCase(Locale.ROOT));
+                    if (!isAllowed) {
+                        log.debug("Llama-text: dropping unrequested field '{}' for docId={}", key, ctx.documentId());
+                        return;
+                    }
+
                     if (val.isTextual()) {
                         String v = val.asText();
-                        if (!v.isBlank() && !"null".equals(v) && !"value".equals(v)
-                                && !"John Smith".equals(v) && !"Mary Jane Smith".equals(v)
-                                && !"Mary Jane".equals(v) && !"Smith".equals(v)
-                                && !"1990-01-15".equals(v) && !"2028-06-30".equals(v)
-                                && !"A1234567".equals(v)) {
-                            fields.put(entry.getKey(), v);
+                        if (!v.isBlank() && !PLACEHOLDER_VALUES.contains(v.toLowerCase(Locale.ROOT))) {
+                            fields.put(key, v);
                         }
                     } else if (val.isNumber()) {
-                        fields.put(entry.getKey(), val.asText());
+                        fields.put(key, val.asText());
                     }
                 });
             }

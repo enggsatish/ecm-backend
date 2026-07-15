@@ -17,11 +17,25 @@ public class SystemConfigController {
 
     public SystemConfigController(SystemConfigService service) { this.service = service; }
 
-    /** All roles can read config (for white-label branding, etc.) */
+    /** Admin-only: read all config (includes sensitive settings) */
     @GetMapping
     @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<List<TenantConfigDto>>> listAll() {
         return ResponseEntity.ok(ApiResponse.ok(service.listAll()));
+    }
+
+    /**
+     * Public branding endpoint — any authenticated user.
+     * Returns only tenant.* and theme.* keys (logo, colors, name).
+     * No sensitive config exposed.
+     */
+    @GetMapping("/branding")
+    public ResponseEntity<ApiResponse<List<TenantConfigDto>>> getBranding() {
+        List<TenantConfigDto> all = service.listAll();
+        List<TenantConfigDto> branding = all.stream()
+                .filter(c -> c.getKey().startsWith("tenant.") || c.getKey().startsWith("theme."))
+                .toList();
+        return ResponseEntity.ok(ApiResponse.ok(branding));
     }
 
     @GetMapping("/{key}")

@@ -1,1 +1,1 @@
--- baseline
+SELECT 1;

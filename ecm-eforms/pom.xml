@@ -143,6 +143,20 @@
             <type>pom</type>
             <scope>test</scope>
         </dependency>
+
+        <!--
+        ╔══════════════════════════════════════════════════════════════════╗
+        ║  DocuSign eSignature — SDK-free, direct REST API approach.      ║
+        ║  Uses Spring RestTemplate + java.security for JWT Grant.        ║
+        ║  No external dependencies needed — RestTemplate comes from      ║
+        ║  spring-boot-starter-web (via ecm-common), Jackson from the     ║
+        ║  same starter, and RSA signing from the JDK.                    ║
+        ║                                                                  ║
+        ║  Previously used docusign-esign-java:4.4.0 + 7 Jersey deps,    ║
+        ║  but the SDK's transitive dependency management is broken       ║
+        ║  (missing Oltu OAuth2, Jersey conflicts with Spring Boot).      ║
+        ╚══════════════════════════════════════════════════════════════════╝
+        -->
     </dependencies>
 
     <build>

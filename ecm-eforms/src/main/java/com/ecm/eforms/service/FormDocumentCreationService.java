@@ -189,6 +189,19 @@ public class FormDocumentCreationService {
     }
 
     /**
+     * Updates a document's status directly via SQL.
+     * Used to set PENDING_SIGNATURE on documents created for eSign workflows.
+     */
+    public void updateDocumentStatus(UUID documentId, String newStatus) {
+        jdbc.update("""
+            UPDATE ecm_core.documents
+            SET status = ?, updated_at = NOW()
+            WHERE id = ?
+            """, newStatus, documentId);
+        log.info("Document {} status updated to {}", documentId, newStatus);
+    }
+
+    /**
      * Resolve customer context for the document display name.
      * Tries: party display name from DB → party external ID → submitter name → short ID fallback.
      */

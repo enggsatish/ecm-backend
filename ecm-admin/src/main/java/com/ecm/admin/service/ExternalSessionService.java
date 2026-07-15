@@ -24,7 +24,7 @@ import java.util.Map;
 @Service
 public class ExternalSessionService {
 
-    @Value("${ecm.external.session-secret:ecm-external-session-secret-change-in-production}")
+    @Value("${ecm.external.session-secret}")
     private String secret;
 
     @Value("${ecm.external.session-ttl-minutes:60}")

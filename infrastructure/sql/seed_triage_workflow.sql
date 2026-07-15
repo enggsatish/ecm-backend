@@ -1,5 +1,5 @@
 -- Seed: Document Review with Admin Triage workflow template
--- Flow: Upload → Admin Triage → (PASS → Backoffice → Reviewer) OR (APPROVED → Reviewer) → Approve/Reject
+-- Flow: Upload -> Admin Triage -> (PASS -> Backoffice -> Reviewer) OR (APPROVED -> Reviewer) -> Approve/Reject
 
 INSERT INTO ecm_workflow.workflow_templates (name, description, dsl_definition, bpmn_xml, bpmn_source, status, sla_hours)
 VALUES (

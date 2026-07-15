@@ -68,7 +68,9 @@ public class DocumentPromotionClient {
                 public String getFilename() { return filename; }
             };
             HttpHeaders fileHeaders = new HttpHeaders();
-            fileHeaders.setContentType(MediaType.APPLICATION_PDF);
+            // Detect content type from filename instead of hardcoding PDF
+            MediaType contentType = resolveMediaType(filename);
+            fileHeaders.setContentType(contentType);
             fileHeaders.setContentDispositionFormData("files", filename);
             body.add("files", new HttpEntity<>(fileResource, fileHeaders));
 
@@ -126,5 +128,19 @@ public class DocumentPromotionClient {
     private String escape(String s) {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private MediaType resolveMediaType(String filename) {
+        if (filename == null) return MediaType.APPLICATION_OCTET_STREAM;
+        String lower = filename.toLowerCase();
+        if (lower.endsWith(".pdf")) return MediaType.APPLICATION_PDF;
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return MediaType.IMAGE_JPEG;
+        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
+        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
+        if (lower.endsWith(".tiff") || lower.endsWith(".tif")) return MediaType.parseMediaType("image/tiff");
+        if (lower.endsWith(".doc") || lower.endsWith(".docx")) return MediaType.parseMediaType("application/msword");
+        if (lower.endsWith(".xls") || lower.endsWith(".xlsx")) return MediaType.parseMediaType("application/vnd.ms-excel");
+        if (lower.endsWith(".txt")) return MediaType.TEXT_PLAIN;
+        return MediaType.APPLICATION_OCTET_STREAM;
     }
 }

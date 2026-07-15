@@ -4,7 +4,7 @@ services:
 
   # ─── PostgreSQL ──────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: ecm-postgres
     mem_limit: 256m
     environment:
@@ -15,7 +15,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./infrastructure/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./infrastructure/sql/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./infrastructure/sql/02-seed-base.sql:/docker-entrypoint-initdb.d/02-seed-base.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ecmuser -d ecmdb"]
       interval: 10s
@@ -134,13 +135,13 @@ services:
     networks:
       - ecm-network
 
-  # ─── Tesseract OCR (dev only) ─────────────────────────────────
-  tesseract-ocr:
-    image: hertzg/tesseract-server:latest
-    container_name: ecm-tesseract
-    mem_limit: 128m
+  # ─── RapidOCR (PaddleOCR models via ONNX Runtime — ARM64 native) ──────
+  rapidocr:
+    build: docker/rapidocr
+    container_name: ecm-rapidocr
+    mem_limit: 1g
     ports:
-      - "8884:8884"
+      - "8884:9003"
     networks:
       - ecm-network
 

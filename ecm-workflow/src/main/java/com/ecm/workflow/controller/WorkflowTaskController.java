@@ -118,11 +118,16 @@ public class WorkflowTaskController {
         String       subject = jwtAuth.getToken().getSubject();
         List<String> groups  = extractCandidateGroupsRaw(jwtAuth);
 
-        // ECM_ADMIN sees ALL tasks regardless of candidate group
+        // ECM_ADMIN and ECM_SUPER_ADMIN see ALL tasks across all groups
         boolean isAdmin = auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ECM_ADMIN"));
+                .anyMatch(a -> {
+                    String role = a.getAuthority();
+                    return role.equals("ROLE_ECM_ADMIN") || role.equals("ROLE_ECM_SUPER_ADMIN")
+                            || role.equals("ECM_ADMIN") || role.equals("ECM_SUPER_ADMIN");
+                });
         if (isAdmin) {
-            groups = java.util.List.of("ECM_ADMIN", "ECM_BACKOFFICE", "ECM_REVIEWER", "ECM_DESIGNER");
+            groups = java.util.List.of("ECM_ADMIN", "ECM_SUPER_ADMIN", "ECM_BACKOFFICE",
+                    "ECM_REVIEWER", "ECM_UNDERWRITER", "ECM_DESIGNER");
         }
 
         List<TaskQueueItemDto> items = assignedToMe

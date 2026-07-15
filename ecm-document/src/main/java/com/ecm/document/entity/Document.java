@@ -16,7 +16,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Maps to ecm_core.documents — schema is owned by the existing Flyway migration.
+ * Maps to ecm_core.documents — v5.0 schema.
  * Column names match exactly; do NOT rename without a new migration.
  */
 @Entity
@@ -53,13 +53,14 @@ public class Document {
     @Column(name = "file_size_bytes")
     private Long fileSizeBytes;
 
-    /**
-     * Full path in blob/object storage.
-     * For MinIO: "{bucket}/{year}/{month}/{uuid}/{filename}"
-     * Stores the full path so the storage layer can resolve without a bucket column.
-     */
-    @Column(name = "blob_storage_path", nullable = false, length = 1000)
-    private String blobStoragePath;
+    /** UUID-based storage key in MinIO: {tenant}/{uuid}/v{version} */
+    @Column(name = "storage_key", nullable = false, length = 500)
+    private String storageKey;
+
+    /** Storage bucket name. */
+    @Column(name = "storage_bucket", nullable = false, length = 100)
+    @Builder.Default
+    private String storageBucket = "ecm-documents";
 
     /** Soft ref → ecm_admin.document_categories.id (no hard FK — cross-schema; integrity owned by application) */
     @Column(name = "category_id")
@@ -107,6 +108,18 @@ public class Document {
     @Column(name = "extracted_fields", columnDefinition = "jsonb")
     private String extractedFields;
 
+    /** SHA-256 checksum of the stored file. */
+    @Column(name = "checksum", length = 128)
+    private String checksum;
+
+    /** How the document was classified: MANUAL, AUTO_CLASSIFIED, QR_CODE, MIGRATION, BATCH */
+    @Column(name = "classification_source", length = 30)
+    private String classificationSource;
+
+    /** Classification confidence score (0.00 - 100.00). */
+    @Column(name = "classification_confidence")
+    private java.math.BigDecimal classificationConfidence;
+
     /** Arbitrary metadata (JSON). */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "metadata", columnDefinition = "jsonb")
@@ -137,4 +150,53 @@ public class Document {
 
     @Column(name = "party_external_id", length = 100)
     private String partyExternalId;
+
+    /** FK → ecm_core.parties.id */
+    @Column(name = "party_id")
+    private UUID partyId;
+
+    // ── Pipeline state (data-driven visualization) ────────────────────
+    /** JSON array of pipeline steps — each service appends its steps. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "pipeline_state", columnDefinition = "jsonb")
+    @Builder.Default
+    private String pipelineState = "[]";
+
+    // ── Optimistic locking — prevents concurrent update conflicts ──────
+    @jakarta.persistence.Version
+    @Column(name = "opt_lock_version")
+    private Long optLockVersion;
+
+    // ── Document checkout / locking ────────────────────────────────────
+    @Column(name = "locked_by", length = 255)
+    private String lockedBy;
+
+    @Column(name = "locked_at")
+    private Instant lockedAt;
+
+    @Column(name = "lock_expires_at")
+    private Instant lockExpiresAt;
+
+    /** Lock type: USER, CASE, or BATCH. */
+    @Column(name = "lock_type", length = 20)
+    private String lockType;
+
+    // ── Archive / Delete audit fields ──────────────────────────────────
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
+    @Column(name = "archived_by", length = 255)
+    private String archivedBy;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    @Column(name = "deleted_by", length = 255)
+    private String deletedBy;
+
+    @Column(name = "delete_reason", length = 500)
+    private String deleteReason;
+
+    @Column(name = "purged_at")
+    private Instant purgedAt;
 }

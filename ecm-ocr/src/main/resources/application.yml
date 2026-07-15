@@ -50,7 +50,15 @@ okta:
     audience: api://sso-default
 
 # ── ECM OCR config ──────────────────────────────────────────────────
+#
+# Pipeline engines are configured dynamically via Admin → Settings → OCR Engine.
+# These application.yml values are fallback defaults for fresh installs only.
+#
 ecm:
+  services:
+    admin-url: ${ECM_ADMIN_URL:http://localhost:8086}
+  classification:
+    confidence-threshold: ${CLASSIFICATION_THRESHOLD:90.0}
   minio:
     endpoint:         ${MINIO_ENDPOINT:http://localhost:9000}
     access-key:       ${MINIO_ACCESS_KEY:ecmminioadmin}
@@ -63,78 +71,47 @@ ecm:
   ocr:
     # ── General ────────────────────────────────────────────────────
     max-file-size-bytes: 52428800   # 50 MB — files above this skip OCR entirely
-    tesseract-enabled:   true       # master switch; false = embedded text only
-
-    # ── Tesseract Docker HTTP container ───────────────────────────
-    #
-    # When tesseract-server-enabled=true, the following content types are
-    # sent to the container for OCR instead of calling a local binary:
-    #
-    #   image/*          → bytes sent directly as multipart POST
-    #   application/pdf  → Tika extracts embedded text first;
-    #                      if chars < scanned-pdf-text-threshold, each page
-    #                      is rendered by PDFBox (300 DPI PNG) and sent to
-    #                      the container individually
-    #
-    tesseract-server-enabled:         true
-    tesseract-server-url:             ${TESSERACT_SERVER_URL:http://localhost:8884}
-
-    # API path — adjust to match your container image:
-    #   "/"           tesseract-server (npm), simpletesseract
-    #   "/tesseract"  python-tesseract-api-server (nickswebsite)
-    #   "/api/ocr"    custom wrappers
-    tesseract-server-api-path:        ${TESSERACT_API_PATH:/tesseract}
-
-    # Multipart field name the server expects for the image file
-    tesseract-server-file-field:      ${TESSERACT_FILE_FIELD:file}
-
-    # HTTP read timeout for a single Tesseract request (seconds)
-    # High-res TIFFs and large PDF pages can take 20–40 s
-    tesseract-server-timeout-seconds: ${TESSERACT_TIMEOUT_SECONDS:60}
 
     # ── Scanned PDF detection ──────────────────────────────────────
-    #
     # If Tika extracts fewer than this many characters from a PDF, the
     # file is treated as a scanned PDF and page-by-page OCR is performed.
-    # Raise to 200-500 if fillable/partial-text PDFs are being re-OCR'd
-    # unnecessarily (they already have enough embedded text).
     scanned-pdf-text-threshold: 50
-
-    # Maximum pages to OCR per scanned PDF.
-    # Pages beyond the limit are skipped; a truncation note is appended.
-    # Each A4 page at 300 DPI ≈ 3 MB PNG — peak heap ≈ 1 page at a time.
     scanned-pdf-max-pages: 100
-
-    # DPI for rendering scanned PDF pages to images.
-    # 300 = Tesseract recommended minimum. Use 150 to halve memory at
-    # the cost of recognition accuracy on small fonts.
     scanned-pdf-render-dpi: 300
 
-    # Tesseract language packs (used for both remote container and local binary)
-    tesseract-languages: eng
+    # ── RapidOCR container (local text extraction) ─────────────────
+    rapidocr-enabled:          ${RAPIDOCR_ENABLED:true}
+    rapidocr-url:              ${RAPIDOCR_URL:http://localhost:8884}
+    rapidocr-api-path:         ${RAPIDOCR_API_PATH:/ocr}
+    rapidocr-file-field:       ${RAPIDOCR_FILE_FIELD:image_file}
+    rapidocr-timeout-seconds:  ${RAPIDOCR_TIMEOUT_SECONDS:60}
+
+    # ── Ollama defaults (overridden by tenant_config pipeline JSON) ─
+    # GLM-OCR 0.9B ≈ 2.2 GB model + ~1 GB KV cache.
+    # On 16 GB Mac: keep_alive=5m unloads after idle to free memory.
+    ollama-url:              ${OLLAMA_URL:http://localhost:11434}
+    ollama-model:            ${OLLAMA_MODEL:glm-ocr}
+    ollama-timeout-seconds:  ${OLLAMA_TIMEOUT_SECONDS:120}
+
+    # ── Tika (Office doc text extraction only) ─────────────────────
+    tika-languages: eng
 
   security:
     allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
 
 management:
-  # Micrometer tracing — sampling probability
   tracing:
     sampling:
-      probability: 1.0     # 100% in dev; set to 0.1 (10%) in azure profile
-
-  # OTLP exporter endpoint — where to send traces
-  # Spring Boot 3.2+ auto-configures OtlpHttpSpanExporter when this is set
+      probability: 1.0
   otlp:
     tracing:
-      endpoint: http://localhost:4318/v1/traces   # Jaeger OTLP/HTTP receiver
-    # Prometheus metrics endpoint
+      endpoint: http://localhost:4318/v1/traces
   metrics:
     export:
       prometheus:
         enabled: true
     tags:
-      application: ${spring.application.name} # label all metrics with service name
-
+      application: ${spring.application.name}
   endpoints:
     web:
       exposure:
@@ -149,8 +126,6 @@ logging:
     org.apache.tika:              WARN
     org.apache.pdfbox:            WARN
     org.springframework.security: INFO
-    # Uncomment to trace HTTP calls to the Tesseract container:
-    # org.springframework.web.client: DEBUG
 
 # ── Azure profile ────────────────────────────────────────────────────
 ---
@@ -187,5 +162,5 @@ ecm:
   security:
     allowed-origins: ${CORS_ORIGINS}
   ocr:
-    tesseract-server-enabled: true
-    tesseract-server-url:     ${TESSERACT_SERVER_URL}
+    rapidocr-enabled: ${RAPIDOCR_ENABLED:false}
+    rapidocr-url:     ${RAPIDOCR_URL:http://localhost:8884}

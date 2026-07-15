@@ -12,9 +12,10 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * GET    /api/notifications/email-templates        list all
- * GET    /api/notifications/email-templates/{id}   get one
- * PUT    /api/notifications/email-templates/{id}   update
+ * GET    /api/notifications/email-templates             list all (admin)
+ * GET    /api/notifications/email-templates/{id}        get one (admin)
+ * GET    /api/notifications/email-templates/by-key/{key} get one by key (any authenticated user)
+ * PUT    /api/notifications/email-templates/{id}        update (admin)
  */
 @RestController
 @RequestMapping("/api/notifications/email-templates")
@@ -33,6 +34,18 @@ public class EmailTemplateController {
     @PreAuthorize("hasPermission(null, 'admin:configure')")
     public ResponseEntity<ApiResponse<EmailTemplateDto>> getById(@PathVariable Integer id) {
         return ResponseEntity.ok(ApiResponse.ok(templateService.getById(id)));
+    }
+
+    /**
+     * Read-only lookup by key for end-user flows that need to display a
+     * template's default subject/body (e.g. the DocuSign signing-request step
+     * in the eForms fill flow). Deliberately not admin-gated — any
+     * authenticated ECM user may read a template, only admins may edit one.
+     */
+    @GetMapping("/by-key/{key}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ApiResponse<EmailTemplateDto>> getByKey(@PathVariable String key) {
+        return ResponseEntity.ok(ApiResponse.ok(templateService.getByKey(key)));
     }
 
     @PutMapping("/{id}")

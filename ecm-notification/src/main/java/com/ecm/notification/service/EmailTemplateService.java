@@ -39,6 +39,24 @@ public class EmailTemplateService {
         ));
     }
 
+    /**
+     * Fetch a template by its key for display to an end user (e.g. the DocuSign
+     * signing-request default subject/body shown while filling out a form).
+     * Unlike listAll()/getById(), this is not admin-gated — see EmailTemplateController.
+     */
+    @Transactional(readOnly = true)
+    public EmailTemplateDto getByKey(String templateKey) {
+        var list = jdbc.query("""
+            SELECT id, template_key, name, subject_template, body_template, is_active, updated_at
+            FROM ecm_core.email_templates WHERE template_key = ?
+            """, (rs, rowNum) -> new EmailTemplateDto(
+                rs.getInt("id"), rs.getString("template_key"), rs.getString("name"),
+                rs.getString("subject_template"), rs.getString("body_template"),
+                rs.getBoolean("is_active"), rs.getObject("updated_at", OffsetDateTime.class)
+        ), templateKey);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
     @Transactional(readOnly = true)
     public EmailTemplateDto getById(Integer id) {
         var list = jdbc.query("""

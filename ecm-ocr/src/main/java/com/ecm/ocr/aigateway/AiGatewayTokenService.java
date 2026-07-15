@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -114,7 +115,17 @@ public class AiGatewayTokenService {
         String tokenUrl = oktaIssuerUri.replaceAll("/$", "") + "/v1/token";
         String basicAuth = Base64.getEncoder().encodeToString(
                 (cfg.oktaClientId() + ":" + cfg.oktaClientSecret()).getBytes(StandardCharsets.UTF_8));
-        String body = "grant_type=client_credentials"; // no scope → Okta returns token with default scopes
+
+        // Build the token request body. Include scope only when admin has configured one.
+        // Okta authorization servers without default scopes require an explicit scope parameter,
+        // otherwise they reject with error=invalid_scope. The scope value is configurable via
+        // the ECM admin Integrations → AI Gateway tab so it can be rotated without redeploy.
+        StringBuilder bodyBuilder = new StringBuilder("grant_type=client_credentials");
+        if (cfg.oktaScope() != null && !cfg.oktaScope().isBlank()) {
+            bodyBuilder.append("&scope=")
+                    .append(URLEncoder.encode(cfg.oktaScope().trim(), StandardCharsets.UTF_8));
+        }
+        String body = bodyBuilder.toString();
 
         try {
             HttpRequest request = HttpRequest.newBuilder()

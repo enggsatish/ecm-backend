@@ -36,7 +36,10 @@ import java.util.UUID;
  *   4. Persist with formSchemaSnapshot (point-in-time compliance copy)
  *   5. Generate draft PDF via PdfGenerationService
  *   6. If docuSignConfig.requiresSignature → create DocuSign envelope (stub)
- *   7. Publish FormSubmittedEvent to RabbitMQ → ecm-workflow
+ *   7. If NEITHER docuSignConfig.requiresSignature NOR workflowConfig is set →
+ *      nothing will ever act on this submission otherwise, so promote the PDF
+ *      straight to a document (status=APPROVED) and return — same as dev-mode.
+ *   8. Otherwise, publish FormSubmittedEvent to RabbitMQ → ecm-workflow
  *
  * Submit flow (dev-mode: ecm.eforms.dev-mode=true):
  *   Steps 1–5 are identical.
@@ -159,13 +162,13 @@ public class FormSubmissionService {
                     saved.markPendingSignature(stubEnvelopeId);
                     saved = submissionRepo.save(saved);
                     log.info("[DEV MODE] Auto-sign: stubEnvelopeId={}", stubEnvelopeId);
-                    UUID docId = createDocumentInDevMode(saved, pdfBytes);
+                    UUID docId = promoteSubmissionDocument(saved, pdfBytes);
                     if (docId != null) {
                         saved.markSigned(docId);
                         saved = submissionRepo.save(saved);
                     }
                 } else {
-                    createDocumentInDevMode(saved, pdfBytes);
+                    promoteSubmissionDocument(saved, pdfBytes);
                 }
             } else {
                 log.warn("[DEV MODE] PDF null — marking APPROVED without document");
@@ -182,7 +185,10 @@ public class FormSubmissionService {
         // 7. DocuSign (stub until credentials are configured)
         if (def.getDocuSignConfig() != null && def.getDocuSignConfig().isRequiresSignature()) {
             try {
-                String envelopeId = docuSignService.createEnvelope(saved);
+                var signing = new DocuSignService.SigningRequest(
+                        req.getSignerEmail(), req.getSignerName(),
+                        req.getEmailSubjectOverride(), req.getEmailBodyOverride());
+                String envelopeId = docuSignService.createEnvelope(saved, signing);
                 saved.markPendingSignature(envelopeId);
                 saved = submissionRepo.save(saved);
                 log.info("DocuSign envelope: id={}, submissionId={}", envelopeId, saved.getId());
@@ -191,7 +197,36 @@ public class FormSubmissionService {
             }
         }
 
-        // 8. Publish event → triggers workflow in ecm-workflow
+        // 8. No lifecycle configured (no signature, no workflow) — nothing will ever
+        //    consume a SUBMITTED event or resolve this submission otherwise, so promote
+        //    the document immediately instead of leaving it stranded. Same promotion
+        //    helper dev-mode uses, just applied as the correct default here too.
+        boolean requiresSignature = def.getDocuSignConfig() != null
+                && def.getDocuSignConfig().isRequiresSignature();
+        boolean hasWorkflow = def.getWorkflowConfig() != null;
+
+        if (!requiresSignature && !hasWorkflow) {
+            if (pdfBytes != null) {
+                UUID docId = promoteSubmissionDocument(saved, pdfBytes);
+                if (docId != null) {
+                    saved.setStatus("APPROVED");
+                    saved.setSignedDocumentId(docId);
+                    saved.setReviewedAt(OffsetDateTime.now());
+                    saved.setReviewNotes("Auto-completed — no signature or workflow configured for this form");
+                    saved = submissionRepo.save(saved);
+                }
+            } else {
+                log.warn("No-lifecycle submission {} has no PDF — marking APPROVED without document", saved.getId());
+                saved.setStatus("APPROVED");
+                saved.setReviewedAt(OffsetDateTime.now());
+                saved.setReviewNotes("Auto-approved (PDF generation failed)");
+                saved = submissionRepo.save(saved);
+            }
+            log.info("No-lifecycle submission auto-completed: id={}, formKey={}", saved.getId(), saved.getFormKey());
+            return saved;
+        }
+
+        // 9. Publish event → triggers workflow in ecm-workflow
         //    Skip for case-linked submissions — case manages its own review flow.
         if (!req.isSkipWorkflow()) {
             eventPublisher.publishSubmitted(saved, def);
@@ -203,19 +238,18 @@ public class FormSubmissionService {
         return saved;
     }
 
-    // ── Dev mode helper ────────────────────────────────────────────────────────
+    // ── Document promotion helper ─────────────────────────────────────────────
 
     /**
-     * Dev-mode fast path:
-     *   1. Store PDF to MinIO
-     *   2. INSERT into ecm_core.documents (cross-schema via JdbcTemplate)
-     *   3. Update FormSubmission: status=APPROVED, signed_document_id=new doc UUID
+     * Promote a submission's generated PDF straight to ecm_core.documents,
+     * bypassing DocuSign/workflow. Used by dev-mode (bypasses them for local
+     * testing) and by the no-lifecycle path in {@link #submit} (bypasses them
+     * because there's genuinely nothing configured to wait for).
      *
      * Uses the same INSERT pattern as WorkflowCompletedListener.handleApproved()
-     * to keep both paths consistent. The PDF has a dummy signature line
-     * (already rendered by PdfGenerationService).
+     * to keep all three paths consistent.
      */
-    private UUID createDocumentInDevMode(FormSubmission submission, byte[] pdfBytes) {
+    private UUID promoteSubmissionDocument(FormSubmission submission, byte[] pdfBytes) {
 
         // Build document name
         String docName = submission.getFormKey() + " — "
@@ -243,6 +277,70 @@ public class FormSubmissionService {
                 .orElseThrow(() -> new IllegalArgumentException("Submission not found: " + id));
     }
 
+    /**
+     * Regenerate the submission's PDF on demand from its persisted formSchemaSnapshot +
+     * submissionData. Not read from storage — cheap, in-memory, always available
+     * regardless of submission status (draft PDF was never persisted as raw bytes
+     * outside of the promote-to-document paths).
+     */
+    @Transactional(readOnly = true)
+    public byte[] getPdf(UUID id) {
+        FormSubmission sub = getById(id);
+        return pdfService.generate(sub);
+    }
+
+    /**
+     * Manually upload a signed copy for a submission that requires a signature —
+     * covers the branch walk-in case: print, sign by hand, scan, upload here instead
+     * of going through DocuSign. Branches on what's configured for the form:
+     *   - workflow + signature required: promote the document, fire the same
+     *     "signed" event DocuSign completion fires ({@link FormEventPublisher#publishSigned}),
+     *     which resumes any workflow instance paused at the docuSignWait receive-task —
+     *     the listener on the other end doesn't care how signing happened.
+     *   - signature required, no workflow: promote the document directly to APPROVED,
+     *     same as the no-lifecycle path in {@link #submit} — nothing else is waiting
+     *     on this submission once it's signed.
+     */
+    public FormSubmission uploadSignedCopy(UUID id, byte[] fileBytes, String originalFilename, String uploadedBy) {
+        FormSubmission sub = getById(id);
+        FormDefinition def = sub.getFormDefinition();
+
+        boolean requiresSignature = def.getDocuSignConfig() != null
+                && def.getDocuSignConfig().isRequiresSignature();
+        if (!requiresSignature) {
+            throw new IllegalStateException("This form does not require a signature");
+        }
+
+        String ext = originalFilename != null && originalFilename.contains(".")
+                ? originalFilename.substring(originalFilename.lastIndexOf('.'))
+                : ".pdf";
+        String filename = sub.getFormKey() + "-" + sub.getId() + "-signed" + ext;
+
+        UUID docId = documentPromotionClient.promote(
+                fileBytes, filename, sub.getFormKey(),
+                sub.getSubmittedBy(), sub.getPartyExternalId(), null);
+
+        sub.markSigned(docId);
+
+        boolean hasWorkflow = def.getWorkflowConfig() != null;
+        if (hasWorkflow) {
+            sub = submissionRepo.save(sub);
+            eventPublisher.publishSigned(sub);
+            log.info("Manual signed copy uploaded by {}, workflow notified: submissionId={}, documentId={}",
+                    uploadedBy, sub.getId(), docId);
+        } else {
+            sub.setStatus("APPROVED");
+            sub.setReviewedAt(OffsetDateTime.now());
+            sub.setReviewNotes("Auto-completed — signature uploaded manually by " + uploadedBy
+                    + ", no workflow configured for this form");
+            sub = submissionRepo.save(sub);
+            log.info("Manual signed copy uploaded by {}, auto-completed (no workflow): submissionId={}, documentId={}",
+                    uploadedBy, sub.getId(), docId);
+        }
+
+        return sub;
+    }
+
     @Transactional(readOnly = true)
     public Page<FormSubmission> listForUser(String userId, Pageable pageable) {
         return submissionRepo.findByTenantIdAndSubmittedByOrderByCreatedAtDesc(TENANT, userId, pageable);
@@ -254,7 +352,7 @@ public class FormSubmissionService {
     }
 
     // Review operations are now handled exclusively through the Flowable workflow engine.
-    // See: /backoffice/queue → EcmTaskService.approve() → processCompletedListener
+    // See: /review/documents → EcmTaskService.approve() → processCompletedListener
     //      → workflow.completed → WorkflowCompletedListener → createFromApprovedSubmission()
 
     // ── Withdraw ───────────────────────────────────────────────────────────────

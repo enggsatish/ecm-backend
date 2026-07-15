@@ -16,13 +16,16 @@ public class CategoryDto {
     private Integer parentId;
     private String parentName;
     private Boolean isActive;
+    private String[] classificationKeywords;
     private OffsetDateTime createdAt;
     private List<CategoryDto> children;
 
     public static CategoryDto from(DocumentCategory cat) {
         CategoryDto dto = new CategoryDto();
         dto.id = cat.getId(); dto.name = cat.getName(); dto.code = cat.getCode();
-        dto.description = cat.getDescription(); dto.isActive = cat.getIsActive(); dto.createdAt = cat.getCreatedAt();
+        dto.description = cat.getDescription(); dto.isActive = cat.getIsActive();
+        dto.classificationKeywords = cat.getClassificationKeywords();
+        dto.createdAt = cat.getCreatedAt();
         if (cat.getParent() != null) { dto.parentId = cat.getParent().getId(); dto.parentName = cat.getParent().getName(); }
         if (cat.getChildren() != null && !cat.getChildren().isEmpty())
             dto.children = cat.getChildren().stream().filter(c -> Boolean.TRUE.equals(c.getIsActive()))
@@ -33,7 +36,9 @@ public class CategoryDto {
     public static CategoryDto flat(DocumentCategory cat) {
         CategoryDto dto = new CategoryDto();
         dto.id = cat.getId(); dto.name = cat.getName(); dto.code = cat.getCode();
-        dto.description = cat.getDescription(); dto.isActive = cat.getIsActive(); dto.createdAt = cat.getCreatedAt();
+        dto.description = cat.getDescription(); dto.isActive = cat.getIsActive();
+        dto.classificationKeywords = cat.getClassificationKeywords();
+        dto.createdAt = cat.getCreatedAt();
         if (cat.getParent() != null) { dto.parentId = cat.getParent().getId(); dto.parentName = cat.getParent().getName(); }
         return dto;
     }
@@ -52,6 +57,8 @@ public class CategoryDto {
     public void setParentName(String parentName) { this.parentName = parentName; }
     public Boolean getIsActive() { return isActive; }
     public void setIsActive(Boolean isActive) { this.isActive = isActive; }
+    public String[] getClassificationKeywords() { return classificationKeywords; }
+    public void setClassificationKeywords(String[] classificationKeywords) { this.classificationKeywords = classificationKeywords; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
     public List<CategoryDto> getChildren() { return children; }

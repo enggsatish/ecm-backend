@@ -60,7 +60,7 @@ public class DocumentSecurityConfig {
 
     /** Must match the header sent by DocumentPromotionClient in ecm-common. */
     private static final String INTERNAL_HEADER = "X-Internal-Service";
-    private static final java.util.Set<String> INTERNAL_VALUES = java.util.Set.of("ecm-eforms", "ecm-admin");
+    private static final java.util.Set<String> INTERNAL_VALUES = java.util.Set.of("ecm-eforms", "ecm-admin", "ecm-batch");
 
     /**
      * Single security filter chain for all ecm-document requests.
@@ -82,6 +82,8 @@ public class DocumentSecurityConfig {
     ) throws Exception {
 
         http
+                // Scope to document paths; common SecurityConfig handles the rest
+                .securityMatcher("/api/documents/**", "/internal/**", "/actuator/**")
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -90,19 +92,31 @@ public class DocumentSecurityConfig {
                 .authorizeHttpRequests(auth -> auth
 
                         // ── Always open ──────────────────────────────────────────────
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
 
                         // ── Internal service-to-service bypass ───────────────────────
-                        // Permits DocumentPromotionClient calls from ecm-eforms.
-                        // Conditions: POST + /api/documents/upload + correct header.
-                        // All three must be true — a stray POST to /upload without the
-                        // header still requires a valid JWT via .anyRequest().authenticated().
-                        .requestMatchers(request ->
-                                "POST".equalsIgnoreCase(request.getMethod())
-                                        && "/api/documents/upload".equals(request.getServletPath())
-                                        && request.getHeader(INTERNAL_HEADER) != null
-                                        && INTERNAL_VALUES.contains(request.getHeader(INTERNAL_HEADER))
-                        ).permitAll()
+                        // Permits DocumentPromotionClient (POST upload/replace/download)
+                        // and DocumentServiceClient (GET document, PUT metadata) from
+                        // ecm-eforms, ecm-admin, and ecm-batch.
+                        .requestMatchers(request -> {
+                            String header = request.getHeader(INTERNAL_HEADER);
+                            if (header == null || !INTERNAL_VALUES.contains(header)) return false;
+                            String method = request.getMethod();
+                            String path = request.getServletPath();
+                            if ("POST".equalsIgnoreCase(method)) {
+                                return "/api/documents/upload".equals(path)
+                                        || path.endsWith("/replace")
+                                        || path.endsWith("/versions")
+                                        || path.endsWith("/download");
+                            }
+                            if ("GET".equalsIgnoreCase(method) && path.startsWith("/api/documents/")) {
+                                return true; // GET /api/documents/{id}
+                            }
+                            if ("PUT".equalsIgnoreCase(method) && path.endsWith("/metadata")) {
+                                return true; // PUT /api/documents/{id}/metadata
+                            }
+                            return false;
+                        }).permitAll()
 
                         // ── Everything else requires a valid Okta JWT ────────────────
                         .anyRequest().authenticated()

@@ -100,6 +100,8 @@ ecm:
     admin-url:     ${ADMIN_SERVICE_URL:http://localhost:8086}
     ocr-url:       ${OCR_SERVICE_URL:http://localhost:8087}
     notification-url: ${NOTIFICATION_SERVICE_URL:http://localhost:8088}
+    batch-url:       ${BATCH_SERVICE_URL:http://localhost:8089}
+    ai-gateway-url:  ${AI_GATEWAY_URL:http://localhost:8090}
   security:
     allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
 
@@ -128,6 +130,8 @@ resilience4j:
         baseConfig: default
       admin-cb:
         baseConfig: default
+      ai-cb:
+        baseConfig: default
 
   timelimiter:
     configs:
@@ -144,6 +148,8 @@ resilience4j:
         timeoutDuration: 15s
       admin-cb:
         timeoutDuration: 15s
+      ai-cb:
+        timeoutDuration: 180s   # Streaming responses can take a while
 
 # ── Actuator ──────────────────────────────────────────────────────────────────
 management:
@@ -170,7 +176,7 @@ management:
         include: health,info,metrics,prometheus,gateway
   endpoint:
     health:
-      show-details: when-authorized
+      show-details: always          # DEV: show full health details. Set to 'when-authorized' in production.
     gateway:
       enabled: true
   health:

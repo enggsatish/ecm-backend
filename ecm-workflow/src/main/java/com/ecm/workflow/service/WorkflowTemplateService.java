@@ -134,7 +134,17 @@ public class WorkflowTemplateService {
             return template.getBpmnXml();
         }
         log.debug("Generating BPMN from DSL for template id={}", id);
-        return bpmnGenerator.generate(template.getDsl(objectMapper));
+        WorkflowTemplateDsl dsl = template.getDsl(objectMapper);
+        // Ensure processKey is never empty — fall back to template's processKey
+        String pk = dsl.getProcessKey();
+        if (pk == null || pk.isBlank() || "null".equals(pk) || "process_default".equals(pk)) {
+            dsl.setProcessKey(template.getProcessKey());
+        }
+        String nm = dsl.getName();
+        if (nm == null || nm.isBlank() || "null".equals(nm) || "Workflow".equals(nm)) {
+            dsl.setName(template.getName());
+        }
+        return bpmnGenerator.generate(dsl);
     }
 
     // ─── Publish ─────────────────────────────────────────────────────────────
@@ -172,6 +182,15 @@ public class WorkflowTemplateService {
                 throw new IllegalStateException(
                         "Cannot publish a template with no steps defined. " +
                                 "Add steps in the workflow designer or define a DSL.");
+            }
+            // Ensure processKey is set (may be empty/null if saved from Simple mode)
+            String pk = dsl.getProcessKey();
+            if (pk == null || pk.isBlank() || "null".equals(pk) || "process_default".equals(pk)) {
+                dsl.setProcessKey(template.getProcessKey());
+            }
+            String nm = dsl.getName();
+            if (nm == null || nm.isBlank() || "null".equals(nm)) {
+                dsl.setName(template.getName());
             }
             bpmnXml = bpmnGenerator.generate(dsl);
             log.info("Publishing template '{}' using generated BPMN from DSL", template.getName());

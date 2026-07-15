@@ -42,12 +42,18 @@ public class CaseController {
 
     @GetMapping
     @PreAuthorize("hasPermission(null, 'CASE:VIEW')")
-    public ResponseEntity<ApiResponse<List<CaseResponse>>> list(
+    public ResponseEntity<ApiResponse<com.ecm.common.model.PagedResult<CaseResponse>>> list(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) UUID partyId,
             @RequestParam(required = false) String search,
-            @RequestParam(required = false) String caseType) {
-        return ResponseEntity.ok(ApiResponse.ok(caseService.list(status, partyId, search, caseType)));
+            @RequestParam(required = false) String caseType,
+            @RequestParam(required = false) String assignedTo,
+            @RequestParam(required = false) String assignedToGroup,
+            @RequestParam(required = false) Boolean unclaimed,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                caseService.list(status, partyId, search, caseType, assignedTo, assignedToGroup, unclaimed, page, size)));
     }
 
     @GetMapping("/{id}")
@@ -128,6 +134,22 @@ public class CaseController {
         return ResponseEntity.ok(ApiResponse.ok(caseService.getTimeline(id)));
     }
 
+    // ── Add Checklist Item ──────────────────────────────────────────────────
+
+    @PostMapping("/{id}/checklist/add")
+    @PreAuthorize("hasPermission(null, 'CASE:UPDATE')")
+    public ResponseEntity<ApiResponse<CaseResponse>> addChecklistItem(
+            @PathVariable UUID id,
+            @RequestBody AddChecklistItemRequest req,
+            @AuthenticationPrincipal Jwt jwt) {
+        String actor = jwt.getClaimAsString("email") != null
+                ? jwt.getClaimAsString("email") : jwt.getSubject();
+        return ResponseEntity.ok(ApiResponse.ok(
+                caseService.addChecklistItem(id, req, actor)));
+    }
+
+    public record AddChecklistItemRequest(Integer categoryId, String customName, boolean isRequired) {}
+
     // ── Workflow Bridge ───────────────────────────────────────────────────────
 
     @PostMapping("/{id}/checklist/{itemId}/start-workflow")
@@ -139,6 +161,53 @@ public class CaseController {
         return ResponseEntity.ok(ApiResponse.ok(
                 caseService.startChecklistWorkflow(id, itemId, jwt.getSubject())));
     }
+
+    @PostMapping("/{id}/checklist/{itemId}/complete")
+    @PreAuthorize("hasPermission(null, 'CASE:UPDATE')")
+    public ResponseEntity<ApiResponse<CaseResponse>> completeItem(
+            @PathVariable UUID id,
+            @PathVariable Integer itemId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String actor = jwt.getClaimAsString("email") != null
+                ? jwt.getClaimAsString("email") : jwt.getSubject();
+        return ResponseEntity.ok(ApiResponse.ok(
+                caseService.completeChecklistItem(id, itemId, actor)));
+    }
+
+    @PostMapping("/{id}/checklist/{itemId}/reopen")
+    @PreAuthorize("hasPermission(null, 'CASE:UPDATE')")
+    public ResponseEntity<ApiResponse<CaseResponse>> reopenItem(
+            @PathVariable UUID id,
+            @PathVariable Integer itemId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String actor = jwt.getClaimAsString("email") != null
+                ? jwt.getClaimAsString("email") : jwt.getSubject();
+        return ResponseEntity.ok(ApiResponse.ok(
+                caseService.reopenChecklistItem(id, itemId, actor)));
+    }
+
+    @PostMapping("/{id}/checklist/{itemId}/send-for-signature")
+    @PreAuthorize("hasPermission(null, 'CASE:UPDATE')")
+    public ResponseEntity<ApiResponse<CaseResponse>> sendForSignature(
+            @PathVariable UUID id,
+            @PathVariable Integer itemId,
+            @RequestBody SendForSignatureRequest req,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                caseService.sendChecklistItemForSignature(id, itemId, req, jwt.getSubject())));
+    }
+
+    public record SendForSignatureRequest(
+            String signerEmail,
+            String signerName,
+            String placement,           // "auto" | "lastPage" | "specific"
+            String signaturePage,       // page number for "specific" placement
+            String signatureX,          // x position for "specific" placement
+            String signatureY,          // y position for "specific" placement
+            boolean requireInitials,    // add initials tab
+            boolean requireDateSigned,  // add date signed tab
+            String emailSubject         // custom email subject
+    ) {}
 
     // ── Override System ───────────────────────────────────────────────────────
 
@@ -308,13 +377,25 @@ public class CaseController {
         return ResponseEntity.ok(ApiResponse.ok(null, "Comment added"));
     }
 
-    /** Resolve real client IP — checks X-Forwarded-For (set by gateway) before falling back to remoteAddr */
+    /**
+     * Resolve real client IP — only trusts X-Forwarded-For from gateway (localhost/127.0.0.1).
+     * Falls back to remoteAddr if header is absent or request comes from untrusted source.
+     */
     private String resolveClientIp(jakarta.servlet.http.HttpServletRequest request) {
+        String remoteAddr = request.getRemoteAddr();
         String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            // X-Forwarded-For can be "client, proxy1, proxy2" — take the first
-            return xff.split(",")[0].trim();
+
+        // Only trust X-Forwarded-For if request came from the gateway (localhost)
+        boolean fromGateway = "127.0.0.1".equals(remoteAddr) || "0:0:0:0:0:0:0:1".equals(remoteAddr)
+                || remoteAddr != null && remoteAddr.startsWith("172.") // Docker network
+                || "localhost".equals(remoteAddr);
+
+        if (fromGateway && xff != null && !xff.isBlank()) {
+            // X-Forwarded-For: "client, proxy1, proxy2" — take the rightmost non-private IP,
+            // or the first if all are private (internal network)
+            String[] parts = xff.split(",");
+            return parts[0].trim();
         }
-        return request.getRemoteAddr();
+        return remoteAddr;
     }
 }

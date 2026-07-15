@@ -2,6 +2,7 @@
 <project version="4">
   <component name="Encoding">
     <file url="file://$PROJECT_DIR$/ecm-admin/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/ecm-batch/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/ecm-common/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/ecm-document/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/ecm-eforms/src/main/java" charset="UTF-8" />

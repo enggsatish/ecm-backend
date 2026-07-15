@@ -49,7 +49,7 @@ public class RolePermissionController {
 
     /** Create a custom role. Name must start with ECM_ */
     @PostMapping("/roles")
-    @PreAuthorize("hasAuthority('PERMISSION_admin:roles')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<RoleDto>> createRole(
             @RequestBody RoleDto.CreateRequest req) {
         RoleDto created = rolePermissionService.createRole(req);
@@ -59,7 +59,7 @@ public class RolePermissionController {
 
     /** Update role name or description. System roles cannot be modified. */
     @PutMapping("/roles/{id}")
-    @PreAuthorize("hasAuthority('PERMISSION_admin:roles')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<RoleDto>> updateRole(
             @PathVariable Integer id,
             @RequestBody RoleDto.UpdateRequest req) {
@@ -71,7 +71,7 @@ public class RolePermissionController {
      * System roles and roles with assigned users are rejected with 409.
      */
     @DeleteMapping("/roles/{id}")
-    @PreAuthorize("hasAuthority('PERMISSION_admin:roles')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<Void>> deleteRole(@PathVariable Integer id) {
         rolePermissionService.deleteRole(id);
         return ResponseEntity.ok(ApiResponse.ok(null));
@@ -81,7 +81,7 @@ public class RolePermissionController {
 
     /** Add a permission to a role. Cache is invalidated for all affected users. */
     @PostMapping("/roles/{id}/permissions")
-    @PreAuthorize("hasAuthority('PERMISSION_admin:roles')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<RoleDto>> addPermission(
             @PathVariable Integer id,
             @RequestBody RoleDto.AddPermissionRequest req) {
@@ -91,7 +91,7 @@ public class RolePermissionController {
 
     /** Remove a permission from a role. Cache is invalidated for all affected users. */
     @DeleteMapping("/roles/{id}/permissions/{code}")
-    @PreAuthorize("hasAuthority('PERMISSION_admin:roles')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<RoleDto>> removePermission(
             @PathVariable Integer id,
             @PathVariable String code) {
@@ -101,7 +101,7 @@ public class RolePermissionController {
 
     /** Apply a capability bundle to a role (expands to individual permissions) */
     @PostMapping("/roles/{id}/bundles/{bundleId}")
-    @PreAuthorize("hasAuthority('PERMISSION_admin:roles')")
+    @PreAuthorize("hasPermission(null, 'admin:roles')")
     public ResponseEntity<ApiResponse<RoleDto>> applyBundle(
             @PathVariable Integer id,
             @PathVariable Integer bundleId) {

@@ -2,6 +2,7 @@ package com.ecm.workflow.model.dsl;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,42 @@ public class WorkflowTemplateDsl {
 
     private List<DslStep> steps = List.of();
     private List<DslEndState> endStates = List.of();
+
+    /**
+     * React Flow canvas layout — preserved through round-trip for position persistence.
+     * Not used by BpmnGeneratorService (ignored during BPMN generation).
+     * Contains node positions, edge routing, and visual state.
+     */
+    @JsonProperty("_flowLayout")
+    private FlowLayout flowLayout;
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FlowLayout {
+        private List<FlowNode> nodes;
+        private List<FlowEdge> edges;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FlowNode {
+        private String id;
+        private String type;
+        private Map<String, Object> position;  // { x, y }
+        private Map<String, Object> data;      // { label, assignedGroup, ... }
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FlowEdge {
+        private String id;
+        private String source;
+        private String target;
+        private String sourceHandle;
+        private String targetHandle;
+        private String label;
+        private List<Map<String, Object>> waypoints;  // For custom edge routing
+    }
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -33,6 +33,14 @@ public class RabbitMqConfig {
     public static final String OCR_DLQ_QUEUE        = "ecm.ocr.requests.dlq";
     public static final String WORKFLOW_TRIGGER_ROUTING_KEY = "document.workflow.trigger";
 
+    // ── OCR completed listener (ecm-document subscribes to ecm-ocr's fanout) ──
+    public static final String OCR_COMPLETED_EX            = "ecm.ocr.completed";
+    public static final String OCR_COMPLETED_DOCUMENT_Q    = "ecm.ocr.completed.document";
+
+    // ── Batch exchange (foreign — owned by ecm-batch, declared here for publishing) ──
+    public static final String BATCH_EXCHANGE              = "ecm.batch";
+    public static final String BATCH_ITEM_PROCESS_KEY      = "batch.item.process";
+
     @Bean
     public TopicExchange documentExchange() {
         return ExchangeBuilder.topicExchange(EXCHANGE).durable(true).build();
@@ -89,6 +97,31 @@ public class RabbitMqConfig {
         template.setMessageConverter(jsonMessageConverter);
         return template;
     }
+    // ── OCR completed fanout — ecm-document binds its own queue ───────────────
+
+    @Bean
+    public FanoutExchange ocrCompletedExchange() {
+        return ExchangeBuilder.fanoutExchange(OCR_COMPLETED_EX).durable(true).build();
+    }
+
+    @Bean
+    public Queue ocrCompletedDocumentQueue() {
+        return QueueBuilder.durable(OCR_COMPLETED_DOCUMENT_Q).build();
+    }
+
+    @Bean
+    public Binding ocrCompletedDocumentBinding(Queue ocrCompletedDocumentQueue,
+                                                FanoutExchange ocrCompletedExchange) {
+        return BindingBuilder.bind(ocrCompletedDocumentQueue).to(ocrCompletedExchange);
+    }
+
+    // ── Batch exchange (foreign) — ecm-document publishes auto-classify messages ──
+
+    @Bean
+    public TopicExchange batchExchange() {
+        return ExchangeBuilder.topicExchange(BATCH_EXCHANGE).durable(true).build();
+    }
+
 /** Commented below code due to following reason: A publisher only needs the exchange to route a message — it has no
  * business declaring a queue it doesn't own.
  * The WORKFLOW_TRIGGER_QUEUE constant was also removed (the queue name is meaningless to the publisher).

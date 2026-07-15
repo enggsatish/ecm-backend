@@ -2,6 +2,7 @@ package com.ecm.workflow.service;
 
 import com.ecm.workflow.dto.WorkflowDtos.*;
 import com.ecm.workflow.model.entity.WorkflowSlaTracking;
+import com.ecm.workflow.model.entity.WorkflowSlaTracking.Status;
 import com.ecm.workflow.repository.WorkflowSlaTrackingRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -17,21 +18,17 @@ public class WorkflowSlaService {
 
     /**
      * Returns counts per status for the SLA dashboard cards.
-     * Uses the existing countByStatus() JPQL query.
+     * Simple in-memory count — safe and avoids JPQL enum casting issues.
      */
     @Transactional(readOnly = true)
     public SlaSummaryDto getSummary() {
-        long onTrack = 0, warning = 0, escalated = 0, breached = 0;
-        for (Object[] row : slaRepo.countByStatus()) {
-            String status = (String) row[0];
-            long   count  = ((Number) row[1]).longValue();
-            switch (status) {
-                case "ON_TRACK"  -> onTrack   = count;
-                case "WARNING"   -> warning   = count;
-                case "ESCALATED" -> escalated = count;
-                case "BREACHED"  -> breached  = count;
-            }
-        }
+        List<WorkflowSlaTracking> all = slaRepo.findAll();
+
+        long onTrack   = all.stream().filter(s -> s.getStatus() == Status.ON_TRACK).count();
+        long warning   = all.stream().filter(s -> s.getStatus() == Status.WARNING).count();
+        long escalated = all.stream().filter(s -> s.getStatus() == Status.ESCALATED).count();
+        long breached  = all.stream().filter(s -> s.getStatus() == Status.BREACHED).count();
+
         return new SlaSummaryDto(onTrack, warning, escalated, breached);
     }
 
@@ -42,7 +39,7 @@ public class WorkflowSlaService {
     @Transactional(readOnly = true)
     public List<SlaOverdueItemDto> getActiveItems() {
         return slaRepo.findAll().stream()
-                .filter(s -> s.getStatus() != WorkflowSlaTracking.Status.COMPLETED)
+                .filter(s -> s.getStatus() != Status.COMPLETED)
                 .sorted(java.util.Comparator.comparing(WorkflowSlaTracking::getSlaDeadline))
                 .map(this::toDto)
                 .toList();

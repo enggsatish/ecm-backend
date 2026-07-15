@@ -1,8 +1,10 @@
 package com.ecm.notification.listener;
 
+import com.ecm.notification.service.EmailQueueService;
 import com.ecm.notification.service.EmailTemplateService;
 import com.ecm.notification.service.EmailTemplateService.RenderedEmail;
 import com.ecm.notification.service.NotificationService;
+import com.ecm.notification.service.PreferenceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import jakarta.mail.internet.MimeMessage;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,6 +37,8 @@ public class CaseEventListener {
     private final JavaMailSender mailSender;
     private final EmailTemplateService templateService;
     private final NotificationService notificationService;
+    private final EmailQueueService emailQueueService;
+    private final PreferenceService preferenceService;
 
     @Value("${ecm.notification.from-email:noreply@ecm.dev.local}")
     private String fromEmail;
@@ -155,29 +160,50 @@ public class CaseEventListener {
     @RabbitListener(queues = "ecm.notification.case.assigned")
     public void onCaseAssigned(Map<String, Object> event) {
         String caseId = str(event.get("caseId"));
+        String caseRef = str(event.get("caseRef"));
+        String customerName = str(event.get("customerName"));
         String assignedTo = str(event.get("assignedTo"));
         String assignedToGroup = str(event.get("assignedToGroup"));
         String assignedBy = str(event.get("assignedBy"));
 
         try {
+            Map<String, String> emailVars = new HashMap<>();
+            emailVars.put("caseRef", caseRef != null ? caseRef : "—");
+            emailVars.put("customerName", customerName != null ? customerName : "—");
+            emailVars.put("assignedBy", assignedBy != null ? assignedBy : "System");
+            emailVars.put("caseId", caseId != null ? caseId : "");
+            emailVars.put("appUrl", appUrl);
+
             if (assignedToGroup != null && !assignedToGroup.isBlank()) {
-                // Assigned to a role group — notify all users in that group
                 String title = "Case assigned to your group";
-                String body = "A case has been assigned to " + assignedToGroup +
-                        " for review." + (assignedBy != null ? " Assigned by: " + assignedBy : "");
+                String body = "Case " + (caseRef != null ? caseRef : "") + " has been assigned to "
+                        + assignedToGroup + " for review."
+                        + (assignedBy != null ? " Assigned by: " + assignedBy : "");
 
                 notificationService.notifyRole(assignedToGroup, title, body,
-                        "/cases/" + caseId, "TASK_ASSIGNED");
+                        "/cases/" + caseId, "CASE_ASSIGNED");
+
+                // Queue emails for all users in the group
+                List<String> emails = notificationService.getUserEmailsForRole(assignedToGroup);
+                for (String email : emails) {
+                    if (preferenceService.isEnabled(email, "CASE_ASSIGNED", "EMAIL")) {
+                        emailQueueService.queueFromTemplate(email, "CASE_ASSIGNED", emailVars);
+                    }
+                }
 
                 log.info("Case assignment notification sent to group {}: caseId={}", assignedToGroup, caseId);
             } else if (assignedTo != null && !assignedTo.isBlank()) {
-                // Assigned to a specific person
                 String title = "Case assigned to you";
-                String body = "A case has been assigned to you for review." +
-                        (assignedBy != null ? " Assigned by: " + assignedBy : "");
+                String body = "Case " + (caseRef != null ? caseRef : "") + " has been assigned to you for review."
+                        + (assignedBy != null ? " Assigned by: " + assignedBy : "");
 
                 notificationService.notifyUser(assignedTo, title, body,
-                        "/cases/" + caseId, "TASK_ASSIGNED");
+                        "/cases/" + caseId, "CASE_ASSIGNED");
+
+                // Queue email for assignee
+                if (preferenceService.isEnabled(assignedTo, "CASE_ASSIGNED", "EMAIL")) {
+                    emailQueueService.queueFromTemplate(assignedTo, "CASE_ASSIGNED", emailVars);
+                }
 
                 log.info("Case assignment notification sent to {}: caseId={}", assignedTo, caseId);
             }

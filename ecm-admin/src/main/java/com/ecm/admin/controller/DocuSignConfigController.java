@@ -69,8 +69,7 @@ public class DocuSignConfigController {
                             "Missing required fields: integration_key, auth_server, impersonated_user_id, or rsa_private_key")));
         }
 
-        // Attempt JWT grant — requires DocuSign Java SDK on classpath (Sprint 2 live mode)
-        // When SDK is not available, test returns a configuration-verified stub response.
+        // Attempt JWT grant — calls ecm-eforms DocuSign service via REST
         try {
             boolean success = attemptJwtGrant(integrationKey, userId, rsaKey, authServer);
             integrationService.recordTestResult(tenantId, success, success ? "OK" : "Auth failed");
@@ -86,28 +85,28 @@ public class DocuSignConfigController {
     }
 
     /**
-     * Performs DocuSign JWT grant authentication.
-     * Wire up the DocuSign Java SDK here for live mode.
-     *
-     * SDK dependency (add to ecm-admin pom.xml when going live):
-     * <dependency>
-     *   <groupId>com.docusign</groupId>
-     *   <artifactId>docusign-esign-java</artifactId>
-     *   <version>4.4.0</version>
-     * </dependency>
+     * Tests DocuSign connection by calling ecm-eforms DocuSign service.
+     * Delegates to ecm-eforms which already has production-grade key parsing
+     * (handles PKCS#1/PKCS#8, literal \n, AES-decrypted keys).
      */
     private boolean attemptJwtGrant(String integrationKey, String userId,
                                     String rsaPrivateKey, String authServer) {
-        // ── LIVE implementation ───────────────────────────────────────────
-        // ApiClient apiClient = new ApiClient(authServer);
-        // byte[] keyBytes = rsaPrivateKey.getBytes(StandardCharsets.UTF_8);
-        // OAuthToken token = apiClient.requestJWTUserToken(
-        //     integrationKey, userId, List.of("signature", "impersonation"), keyBytes, 3600);
-        // return token != null && token.getAccessToken() != null;
+        try {
+            // Call ecm-eforms test-connection endpoint instead of reimplementing JWT Grant
+            var restTemplate = new org.springframework.web.client.RestTemplate();
+            var response = restTemplate.getForEntity(
+                    "http://localhost:8084/api/eforms/docusign/test-connection",
+                    java.util.Map.class);
 
-        // ── STUB: config fields validated, SDK not wired up ──────────────
-        log.info("[DocuSign TEST STUB] integrationKey={}, authServer={}, userId={}",
-                integrationKey, authServer, userId);
-        return true; // replace with real SDK call above
+            boolean ok = response.getStatusCode().is2xxSuccessful()
+                    && response.getBody() != null
+                    && Boolean.TRUE.equals(response.getBody().get("success"));
+
+            log.info("[DocuSign] Connection test via ecm-eforms: success={}", ok);
+            return ok;
+        } catch (Exception e) {
+            log.error("[DocuSign] Connection test failed: {}", e.getMessage());
+            throw new RuntimeException("Connection test failed: " + e.getMessage(), e);
+        }
     }
 }

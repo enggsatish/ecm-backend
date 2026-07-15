@@ -12,7 +12,7 @@ import java.util.*;
 /**
  * HTTP client for calling ecm-workflow admin endpoints.
  *
- * Auth: shared internal API key (X-Internal-Token header).
+ * Auth: X-Internal-Service header (standard inter-service pattern).
  * Degrades gracefully — if workflow service is down, methods log and return empty/void.
  */
 @Service
@@ -22,11 +22,10 @@ public class WorkflowClient {
     private final RestClient restClient;
 
     public WorkflowClient(
-            @Value("${ecm.services.workflow-url:http://localhost:8083}") String workflowUrl,
-            @Value("${ecm.internal.api-key:ecm-internal-dev-key}") String internalApiKey) {
+            @Value("${ecm.services.workflow-url:http://localhost:8083}") String workflowUrl) {
         this.restClient = RestClient.builder()
                 .baseUrl(workflowUrl)
-                .defaultHeader("X-Internal-Token", internalApiKey)
+                .defaultHeader("X-Internal-Service", "ecm-admin")
                 .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                 .build();
     }

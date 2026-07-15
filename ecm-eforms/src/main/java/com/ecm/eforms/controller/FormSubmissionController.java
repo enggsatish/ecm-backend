@@ -29,6 +29,8 @@ import java.util.UUID;
  * GET    /api/eforms/submissions/mine         own submissions (any auth user)
  * GET    /api/eforms/submissions              all submissions (backoffice)
  * GET    /api/eforms/submissions/{id}         detail (owner or backoffice)
+ * GET    /api/eforms/submissions/{id}/pdf     regenerated PDF (owner or backoffice)
+ * POST   /api/eforms/submissions/{id}/signed-copy  manually-signed replacement upload
  * POST   /api/eforms/submissions/{id}/withdraw
  */
 @RestController
@@ -106,6 +108,56 @@ public class FormSubmissionController {
                     .body(ApiResponse.error("Access denied", "ACCESS_DENIED"));
 
         return ResponseEntity.ok(ApiResponse.ok(formMapper.toSubmissionDto(sub)));
+    }
+
+    @GetMapping("/{id}/pdf")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<byte[]> getPdf(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+        FormSubmission sub = submissionService.getById(id);
+
+        List<String> groups = jwt.getClaimAsStringList("groups");
+        boolean privileged = groups != null && groups.stream()
+                .anyMatch(g -> g.contains("ADMIN") || g.contains("BACKOFFICE") || g.contains("REVIEWER"));
+
+        if (!privileged && !sub.getSubmittedBy().equals(jwt.getSubject()))
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+
+        byte[] pdf = submissionService.getPdf(id);
+        String filename = sub.getFormKey() + "-" + sub.getId().toString().substring(0, 8) + ".pdf";
+
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(pdf);
+    }
+
+    @PostMapping("/{id}/signed-copy")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ApiResponse<FormSubmissionDto>> uploadSignedCopy(
+            @PathVariable UUID id,
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+            @AuthenticationPrincipal Jwt jwt) {
+
+        FormSubmission sub = submissionService.getById(id);
+        List<String> groups = jwt.getClaimAsStringList("groups");
+        boolean privileged = groups != null && groups.stream()
+                .anyMatch(g -> g.contains("ADMIN") || g.contains("BACKOFFICE") || g.contains("REVIEWER"));
+
+        if (!privileged && !sub.getSubmittedBy().equals(jwt.getSubject()))
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error("Access denied", "ACCESS_DENIED"));
+
+        try {
+            FormSubmission updated = submissionService.uploadSignedCopy(
+                    id, file.getBytes(), file.getOriginalFilename(), jwt.getSubject());
+            return ResponseEntity.ok(ApiResponse.ok(formMapper.toSubmissionDto(updated)));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(ApiResponse.error(e.getMessage(), "SIGNATURE_NOT_REQUIRED"));
+        } catch (java.io.IOException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error("Could not read uploaded file", "UPLOAD_FAILED"));
+        }
     }
 
     @PostMapping("/{id}/withdraw")

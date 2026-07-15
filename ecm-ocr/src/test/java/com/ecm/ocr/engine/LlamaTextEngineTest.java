@@ -128,7 +128,7 @@ class LlamaTextEngineTest {
         @DisplayName("Filters out prompt example values from fields")
         void filtersExampleValues() {
             // Llama sometimes echoes the prompt example values
-            String llamaResponse = "{\"category\":\"IDENTITY\",\"confidence\":85,\"fields\":{\"full_name\":\"Mary Jane Smith\",\"date_of_birth\":\"1990-01-15\",\"real_field\":\"actual value\"}}";
+            String llamaResponse = "{\"category\":\"IDENTITY\",\"confidence\":85,\"fields\":{\"full_name\":\"Mary Ann Jane Smith\",\"date_of_birth\":\"1990-01-15\",\"nationality\":\"Canadian\"}}";
 
             given(ollamaClient.generateText(anyString(), anyString(), anyString(), anyInt()))
                     .willReturn(llamaResponse);
@@ -138,7 +138,23 @@ class LlamaTextEngineTest {
 
             assertThat(result.fields()).doesNotContainKey("full_name"); // filtered — example value
             assertThat(result.fields()).doesNotContainKey("date_of_birth"); // filtered — example value
-            assertThat(result.fields()).containsEntry("real_field", "actual value");
+            assertThat(result.fields()).containsEntry("nationality", "Canadian"); // real value, in IDENTITY field list
+        }
+
+        @Test
+        @DisplayName("Drops fields the model invents that weren't requested for the category")
+        void dropsUnrequestedFields() {
+            // e.g. LLM hallucinates a "donor_name" field from an organ-donor icon on a driver's license
+            String llamaResponse = "{\"category\":\"IDENTITY\",\"confidence\":90,\"fields\":{\"full_name\":\"Erin Anderson\",\"donor_name\":\"Erin Anderson\"}}";
+
+            given(ollamaClient.generateText(anyString(), anyString(), anyString(), anyInt()))
+                    .willReturn(llamaResponse);
+
+            OcrEngineResult result = engine.process(null, null,
+                    ctx("ALBERTA GOVERNMENT ERIN ANDERSON OPERATOR'S LICENCE"));
+
+            assertThat(result.fields()).containsEntry("full_name", "Erin Anderson");
+            assertThat(result.fields()).doesNotContainKey("donor_name"); // not in IDENTITY's requested field list
         }
 
         @Test

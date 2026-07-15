@@ -367,23 +367,22 @@ public class EcmTaskService {
                 .list();
         mine.forEach(t -> merged.put(t.getId(), t));
 
-        // Pool tasks available to my groups (unassigned)
-        if (!candidateGroups.isEmpty()) {
-            List<Task> pool = flowableTaskService.createTaskQuery()
-                    .taskCandidateGroupIn(candidateGroups)
-                    .taskUnassigned()
-                    .orderByTaskCreateTime().desc()
-                    .list();
-            pool.forEach(t -> merged.putIfAbsent(t.getId(), t));
-        }
-
-        // Admin: also include tasks claimed by OTHER users
         if (isAdmin) {
-            List<Task> allAssigned = flowableTaskService.createTaskQuery()
-                    .taskAssigned()
+            // Admin / Super Admin: see ALL tasks (unassigned + claimed by anyone)
+            List<Task> allTasks = flowableTaskService.createTaskQuery()
                     .orderByTaskCreateTime().desc()
                     .list();
-            allAssigned.forEach(t -> merged.putIfAbsent(t.getId(), t));
+            allTasks.forEach(t -> merged.putIfAbsent(t.getId(), t));
+        } else {
+            // Regular user: only unassigned pool tasks for their candidate groups
+            if (!candidateGroups.isEmpty()) {
+                List<Task> pool = flowableTaskService.createTaskQuery()
+                        .taskCandidateGroupIn(candidateGroups)
+                        .taskUnassigned()
+                        .orderByTaskCreateTime().desc()
+                        .list();
+                pool.forEach(t -> merged.putIfAbsent(t.getId(), t));
+            }
         }
 
         return merged.values().stream()

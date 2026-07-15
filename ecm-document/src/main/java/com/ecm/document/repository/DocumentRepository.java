@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -26,6 +28,18 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     Page<Document> findByPartyExternalIdAndStatusNotOrderByCreatedAtDesc(
             String partyExternalId, DocumentStatus status, Pageable pageable);
 
+    /** Documents that are in a given status but have no category (needs classification). */
+    Page<Document> findByStatusAndCategoryIdIsNullOrderByCreatedAtDesc(
+            DocumentStatus status, Pageable pageable);
+
+    /** Documents in any of the given statuses (for classification + assignment queues). */
+    Page<Document> findByStatusInOrderByCreatedAtDesc(
+            List<DocumentStatus> statuses, Pageable pageable);
+
+    /** Auto-classified documents for spot check audit. */
+    Page<Document> findByStatusAndClassificationSourceOrderByCreatedAtDesc(
+            DocumentStatus status, String classificationSource, Pageable pageable);
+
     // Search by document name, filename, customer ref, or customer name
     @Query("""
     SELECT d FROM Document d
@@ -39,4 +53,36 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
             @Param("q") String query,
             @Param("excluded") DocumentStatus excluded,
             Pageable pageable);
+
+    // ── Retention scheduler queries ──────────────────────────────────────────
+
+    /** ACTIVE docs in a category older than cutoff → eligible for auto-archive */
+    List<Document> findByStatusAndCategoryIdAndCreatedAtBefore(
+            DocumentStatus status, Integer categoryId, Instant cutoff);
+
+    /** ACTIVE docs with no category older than cutoff */
+    List<Document> findByStatusAndCategoryIdIsNullAndCreatedAtBefore(
+            DocumentStatus status, Instant cutoff);
+
+    /** ARCHIVED docs in a category archived before cutoff → eligible for purge */
+    List<Document> findByStatusAndCategoryIdAndArchivedAtBefore(
+            DocumentStatus status, Integer categoryId, Instant cutoff);
+
+    /** ARCHIVED docs with no category archived before cutoff */
+    List<Document> findByStatusAndCategoryIdIsNullAndArchivedAtBefore(
+            DocumentStatus status, Instant cutoff);
+
+    // ── Version chain queries ───────────────────────────────────────────────
+
+    /** Find all versions that are children of this document. */
+    List<Document> findByParentDocIdOrderByVersionAsc(UUID parentDocId);
+
+    /** Find the latest version in a chain (isLatestVersion = true, same parent). */
+    Optional<Document> findByParentDocIdAndIsLatestVersionTrue(UUID parentDocId);
+
+    /** Release expired document locks — returns count of released locks */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE Document d SET d.lockedBy = null, d.lockedAt = null, d.lockExpiresAt = null " +
+           "WHERE d.lockedBy IS NOT NULL AND d.lockExpiresAt <= :now")
+    int releaseExpiredLocks(@Param("now") Instant now);
 }

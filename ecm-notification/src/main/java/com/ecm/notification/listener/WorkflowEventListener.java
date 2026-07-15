@@ -48,7 +48,7 @@ public class WorkflowEventListener {
 
             // In-app notification (immediate)
             notificationService.notifyRole(assignedGroup, title, body,
-                    "/backoffice/queue", "TASK_ASSIGNED");
+                    "/review/documents", "TASK_ASSIGNED");
 
             // Queue email (batch) — one per user in the role
             List<String> emails = notificationService.getUserEmailsForRole(assignedGroup);

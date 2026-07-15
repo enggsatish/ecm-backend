@@ -24,6 +24,10 @@ public class IntegrationConfigDto {
             String accountId,
             String integrationKey,
             String impersonatedUserId,
+            // email branding
+            String companyName,
+            String emailSubjectTemplate,
+            String emailBodyTemplate,
             // secret presence indicators — "*** saved ***" if set, else null
             String rsaPrivateKey,
             String webhookHmacSecret,
@@ -40,6 +44,10 @@ public class IntegrationConfigDto {
             String accountId,
             String integrationKey,
             String impersonatedUserId,
+            // email branding
+            String companyName,
+            String emailSubjectTemplate,
+            String emailBodyTemplate,
             /** null or "*** saved ***" → keep existing; any other value → encrypt and store */
             String rsaPrivateKey,
             /** null or "*** saved ***" → keep existing; any other value → encrypt and store */

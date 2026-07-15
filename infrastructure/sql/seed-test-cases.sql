@@ -33,47 +33,47 @@ WHERE external_ref LIKE 'LOAN-2026-001%' OR external_ref LIKE 'COMM-2026-002%' O
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. CASES
 --
--- Retail:     Sarah Johnson → Mortgage, Michael Chen → Auto Loan
--- Commercial: Apex Industrial → Credit Facility, Pacific Timber → Credit Facility
--- SMB:        Greenleaf → SMB Loan, Metro Dental → SMB Loan
+-- Retail:     Sarah Johnson -> Mortgage, Michael Chen -> Auto Loan
+-- Commercial: Apex Industrial -> Credit Facility, Pacific Timber -> Credit Facility
+-- SMB:        Greenleaf -> SMB Loan, Metro Dental -> SMB Loan
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Sarah Johnson → Mortgage Application
+-- Sarah Johnson -> Mortgage Application
 INSERT INTO ecm_core.cases (id, external_ref, party_id, product_id, case_type, status, source_system)
 SELECT gen_random_uuid(), 'LOAN-2026-00101', p.id,
        (SELECT id FROM ecm_admin.products WHERE product_code = 'MORTGAGE'),
        'LOAN_ORIGINATION', 'NEW', 'ECM'
 FROM ecm_core.parties p WHERE p.external_id = 'CUST-RET-001';
 
--- Michael Chen → Auto Loan
+-- Michael Chen -> Auto Loan
 INSERT INTO ecm_core.cases (id, external_ref, party_id, product_id, case_type, status, source_system)
 SELECT gen_random_uuid(), 'LOAN-2026-00102', p.id,
        (SELECT id FROM ecm_admin.products WHERE product_code = 'AUTO_LOAN'),
        'LOAN_ORIGINATION', 'NEW', 'ECM'
 FROM ecm_core.parties p WHERE p.external_id = 'CUST-RET-002';
 
--- Apex Industrial → Commercial Credit Facility
+-- Apex Industrial -> Commercial Credit Facility
 INSERT INTO ecm_core.cases (id, external_ref, party_id, product_id, case_type, status, source_system)
 SELECT gen_random_uuid(), 'COMM-2026-00201', p.id,
        (SELECT id FROM ecm_admin.products WHERE product_code = 'COMM_CREDIT_FACILITY'),
        'LOAN_ORIGINATION', 'NEW', 'ECM'
 FROM ecm_core.parties p WHERE p.external_id = 'CUST-COM-001';
 
--- Pacific Timber → Commercial Credit Facility
+-- Pacific Timber -> Commercial Credit Facility
 INSERT INTO ecm_core.cases (id, external_ref, party_id, product_id, case_type, status, source_system)
 SELECT gen_random_uuid(), 'COMM-2026-00202', p.id,
        (SELECT id FROM ecm_admin.products WHERE product_code = 'COMM_CREDIT_FACILITY'),
        'LOAN_ORIGINATION', 'NEW', 'ECM'
 FROM ecm_core.parties p WHERE p.external_id = 'CUST-COM-002';
 
--- Greenleaf Landscaping → SMB Loan
+-- Greenleaf Landscaping -> SMB Loan
 INSERT INTO ecm_core.cases (id, external_ref, party_id, product_id, case_type, status, source_system)
 SELECT gen_random_uuid(), 'SMB-2026-00301', p.id,
        (SELECT id FROM ecm_admin.products WHERE product_code = 'SMB_LOAN'),
        'LOAN_ORIGINATION', 'NEW', 'ECM'
 FROM ecm_core.parties p WHERE p.external_id = 'CUST-SMB-001';
 
--- Metro Dental → SMB Loan
+-- Metro Dental -> SMB Loan
 INSERT INTO ecm_core.cases (id, external_ref, party_id, product_id, case_type, status, source_system)
 SELECT gen_random_uuid(), 'SMB-2026-00302', p.id,
        (SELECT id FROM ecm_admin.products WHERE product_code = 'SMB_LOAN'),

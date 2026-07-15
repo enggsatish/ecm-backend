@@ -87,13 +87,19 @@ public class GatewaySecurityConfig {
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                         // ── Actuator health (used by Docker/k8s probes) ───────────
-                        .pathMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .pathMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
 
                         // ── Circuit breaker fallback endpoints ────────────────────
                         .pathMatchers("/fallback/**").permitAll()
 
                         // ── External participant access (OTP-based, no JWT) ─────
                         .pathMatchers("/api/admin/cases/external/**").permitAll()
+
+                        // ── DocuSign Connect webhook (HMAC-secured, no JWT) ─────
+                        .pathMatchers("/api/eforms/docusign/webhook").permitAll()
+
+                        // ── Internal service-to-service calls ────────────────────
+                        .pathMatchers("/api/eforms/docusign/create-envelope").permitAll()
 
                         // ── Everything else requires a valid Okta JWT ─────────────
                         .anyExchange().authenticated()

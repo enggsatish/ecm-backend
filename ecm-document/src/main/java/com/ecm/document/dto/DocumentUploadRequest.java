@@ -7,8 +7,9 @@ import jakarta.validation.constraints.Size;
  * The actual file comes through @RequestPart("file").
  * uploadedBy is resolved from the JWT in the controller — not supplied by the client.
  *
- * Sprint-C additions:
- *   segmentId / productLineId / segmentCode / productLineCode — hierarchy context
+ * v5.0 changes:
+ *   segmentId / productLineId — hierarchy context (IDs only; codes removed,
+ *   MinIO path no longer uses segment/product-line codes)
  *
  * Sprint-D fix:
  *   partyExternalId — soft reference to the party (customer / organisation) the document
@@ -30,11 +31,9 @@ public record DocumentUploadRequest(
         String   metadata,                     // arbitrary JSON string
         String[] tags,
 
-        // ── Sprint-C: hierarchy context ───────────────────────────────────────
+        // ── Hierarchy context (v5.0: IDs only, codes removed) ────────────────
         Integer segmentId,                     // soft ref → ecm_admin.segments.id
         Integer productLineId,                 // soft ref → ecm_admin.product_lines.id
-        @Size(max = 20)  String segmentCode,   // e.g. RETAIL — used in MinIO path
-        @Size(max = 30)  String productLineCode, // e.g. RETAIL_LOANS — used in MinIO path
 
         // ── Sprint-D: party context ───────────────────────────────────────────
         @Size(max = 100) String partyExternalId,  // soft ref → ecm_core.parties.external_id

@@ -1,5 +1,6 @@
 package com.ecm.eforms.service;
 
+import com.ecm.eforms.model.entity.FormDefinition;
 import com.ecm.eforms.model.entity.FormSubmission;
 import com.ecm.eforms.model.schema.FieldType;
 import com.ecm.eforms.model.schema.FormField;
@@ -119,6 +120,26 @@ public class PdfGenerationService {
         }
     }
 
+    /**
+     * Blank print — same layout/QR mechanics as {@link #generate(FormSubmission)} but
+     * with no submission data (empty fields) and no submitter/party identity in the QR
+     * payload (sid/pid omitted — there's nothing to identify yet). Used for branch
+     * walk-in scenarios: print blank, fill by hand, scan back in — the QR still lets
+     * the scan resolve the form/category, just not the customer.
+     */
+    public byte[] generateBlank(FormDefinition definition) {
+        log.info("Generating blank PDF for formKey={}, formDefinitionId={}",
+                definition.getFormKey(), definition.getId());
+        try {
+            byte[] pdf = buildBlankPdf(definition);
+            log.info("Blank PDF generated: {} bytes for formKey={}", pdf.length, definition.getFormKey());
+            return pdf;
+        } catch (IOException e) {
+            log.error("Blank PDF generation failed for formKey={}: {}", definition.getFormKey(), e.getMessage(), e);
+            throw new PdfGenerationException("Failed to generate blank PDF for " + definition.getFormKey(), e);
+        }
+    }
+
     // ── Core builder ──────────────────────────────────────────────────────────
 
     private byte[] buildPdf(FormSubmission submission) throws IOException {
@@ -160,7 +181,11 @@ public class PdfGenerationService {
             FormSchema schema = submission.getFormSchemaSnapshot();
             Map<String, Object> data = submission.getSubmissionData();
 
-            boolean inline = schema != null && "inline".equals(schema.getLabelPosition());
+            // Default to inline (label beside value) — matches frontend FormRenderer behavior.
+            // Only use stacked layout if explicitly set to "stacked".
+            boolean inline = schema == null
+                    || schema.getLabelPosition() == null
+                    || "inline".equals(schema.getLabelPosition());
 
             if (schema != null && schema.getSections() != null) {
                 for (FormSection section : schema.getSections()) {
@@ -197,21 +222,70 @@ public class PdfGenerationService {
                 // Non-fatal — continue without QR
             }
 
-            // ── Signature block ───────────────────────────────────────
-            ctx.moveDown(20);
-            // Ensure there's room for the signature block; if not, start a new page
-            if (ctx.getY() < BOTTOM_Y + 60) {
-                ctx.newPage();
-            }
+            // Signature block is now designer-driven: use SIGNATURE/INITIALS field types
+            // in the form schema. The PDF renders anchor markers that DocuSign detects.
+
+            ctx.close();
+            doc.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    private byte[] buildBlankPdf(FormDefinition definition) throws IOException {
+        try (PDDocument doc = new PDDocument();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+
+            PDType1Font fontBold   = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+            PDType1Font fontNormal = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+            PDType1Font fontOblique = new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE);
+
+            PageContext ctx = new PageContext(doc, fontBold, fontNormal);
+
+            // ── Title block ───────────────────────────────────────────
+            String formTitle = safe(definition.getFormKey() != null
+                    ? definition.getFormKey().replace("-", " ").replace("_", " ")
+                    : "Form");
+            ctx.writeText(fontBold, FONT_SIZE_TITLE, formTitle);
+            ctx.moveDown(6);
+
+            ctx.writeText(fontNormal, FONT_SIZE_META, "Blank form — for manual completion");
+            ctx.moveDown(4);
             ctx.drawHRule();
             ctx.moveDown(8);
-            ctx.writeText(fontBold, FONT_SIZE_LABEL, "APPLICANT SIGNATURE");
-            ctx.moveDown(6);
-            ctx.writeText(fontNormal, FONT_SIZE_VALUE,
-                    "Signature: _________________________________    Date: _______________");
-            ctx.moveDown(4);
-            ctx.writeText(fontNormal, FONT_SIZE_VALUE,
-                    "Print Name: ________________________________");
+
+            // ── Schema-driven field rendering (no data — every field renders empty) ──
+            FormSchema schema = definition.getSchema();
+            Map<String, Object> emptyData = Map.of();
+            boolean inline = schema == null
+                    || schema.getLabelPosition() == null
+                    || "inline".equals(schema.getLabelPosition());
+
+            if (schema != null && schema.getSections() != null) {
+                for (FormSection section : schema.getSections()) {
+                    renderSection(ctx, section, emptyData, fontBold, fontNormal, fontOblique, inline);
+                }
+            }
+
+            // ── QR Code ──────────────────────────────────────────────
+            try {
+                byte[] qrPng = generateBlankQrCode(definition);
+                if (qrPng != null) {
+                    ctx.moveDown(12);
+                    ctx.drawHRule();
+                    ctx.moveDown(6);
+                    if (ctx.getY() < BOTTOM_Y + QR_SIZE + 20) {
+                        ctx.newPage();
+                    }
+                    PDImageXObject qrImage = PDImageXObject.createFromByteArray(doc, qrPng, "qr.png");
+                    float qrX = PAGE_WIDTH - MARGIN - QR_SIZE;
+                    float qrY = ctx.getY() - QR_SIZE;
+                    ctx.getStream().drawImage(qrImage, qrX, qrY, QR_SIZE, QR_SIZE);
+                    ctx.writeText(fontNormal, FONT_SIZE_META, "ECM Form QR — scan to link this document");
+                    ctx.moveDown(QR_SIZE - FONT_SIZE_META);
+                }
+            } catch (Exception e) {
+                log.warn("QR code generation failed for blank formKey={}: {}", definition.getFormKey(), e.getMessage());
+            }
 
             ctx.close();
             doc.save(out);
@@ -221,6 +295,8 @@ public class PdfGenerationService {
 
     // ── Section renderer ──────────────────────────────────────────────────────
 
+    // Layout-only types that always break the row and render full-width.
+    // LABEL is NOT here — it respects colSpan and flows inline with other fields.
     private static final java.util.Set<FieldType> LAYOUT_ONLY_TYPES =
             java.util.Set.of(FieldType.SECTION_HEADER, FieldType.PARAGRAPH, FieldType.DIVIDER);
 
@@ -401,6 +477,51 @@ public class PdfGenerationService {
                 ctx.moveDown(4);
                 break;
             }
+
+            // ── Layout: LABEL — inline static text, respects colSpan ──
+            case LABEL: {
+                String text = field.getLabel();
+                if (text == null || text.isBlank()) return;
+                PDType1Font font = field.isRequired() ? fontBold : fontNormal;
+                ctx.writeTextAt(font, FONT_SIZE_VALUE, safe(text), xOffset);
+                ctx.moveDown(4);
+                break;
+            }
+
+            // ── eSign: SIGNATURE — renders DocuSign anchor marker ────
+            case SIGNATURE: {
+                ctx.moveDown(4);
+                ctx.drawHRuleAt(xOffset, cellWidth);
+                ctx.moveDown(4);
+                // Anchor string — DocuSign finds this and places a SignHere tab
+                String sigAnchor = "/sig" + (field.getId() != null ? field.getId().hashCode() & 0xFFF : "1") + "/";
+                ctx.writeTextAt(fontOblique, FONT_SIZE_LABEL,
+                        safe(field.getLabel() != null ? field.getLabel() : "Signature"), xOffset);
+                ctx.moveDown(2);
+                // Render anchor (very small, acts as DocuSign marker)
+                ctx.writeTextAt(fontNormal, 4f, sigAnchor, xOffset);
+                ctx.writeTextAt(fontNormal, FONT_SIZE_VALUE,
+                        "_________________________________________", xOffset);
+                ctx.moveDown(8);
+                break;
+            }
+
+            // ── eSign: INITIALS — renders DocuSign anchor marker ─────
+            case INITIALS: {
+                String initAnchor = "/init" + (field.getId() != null ? field.getId().hashCode() & 0xFFF : "1") + "/";
+                ctx.writeTextAt(fontOblique, FONT_SIZE_LABEL,
+                        safe(field.getLabel() != null ? field.getLabel() : "Initials"), xOffset);
+                ctx.moveDown(2);
+                ctx.writeTextAt(fontNormal, 4f, initAnchor, xOffset);
+                ctx.writeTextAt(fontNormal, FONT_SIZE_VALUE, "________", xOffset);
+                ctx.moveDown(8);
+                break;
+            }
+
+            // ── eSign: SIGNER_EMAIL — renders as normal input field ──
+            case SIGNER_EMAIL:
+                // Falls through to default — renders as label + value like any input
+                // DocuSign service reads this field's value as the recipient email
 
             // ── All input fields: label + value from submissionData ───
             default: {
@@ -709,23 +830,49 @@ public class PdfGenerationService {
      *   v    — form version
      *   fd   — formDefinitionId
      *   sid  — submissionId (null for blank prints)
-     *   cid  — caseId (if case context exists)
+     *   cid  — caseId (only if the form was filled from within a case context)
+     *   cki  — checklist item id within that case (only alongside cid)
      *   pid  — partyExternalId (customer)
      */
     private byte[] generateQrCode(FormSubmission submission) {
-        try {
-            Map<String, Object> qrPayload = new LinkedHashMap<>();
-            qrPayload.put("ecm", true);
-            qrPayload.put("fk", submission.getFormKey());
-            qrPayload.put("v", submission.getFormVersion());
-            if (submission.getFormDefinition() != null) {
-                qrPayload.put("fd", submission.getFormDefinition().getId().toString());
-            }
-            qrPayload.put("sid", submission.getId().toString());
-            if (submission.getPartyExternalId() != null) {
-                qrPayload.put("pid", submission.getPartyExternalId());
-            }
+        Map<String, Object> qrPayload = new LinkedHashMap<>();
+        qrPayload.put("ecm", true);
+        qrPayload.put("fk", submission.getFormKey());
+        qrPayload.put("v", submission.getFormVersion());
+        if (submission.getFormDefinition() != null) {
+            qrPayload.put("fd", submission.getFormDefinition().getId().toString());
+        }
+        qrPayload.put("sid", submission.getId().toString());
+        if (submission.getPartyExternalId() != null) {
+            qrPayload.put("pid", submission.getPartyExternalId());
+        }
+        // Case context — injected by FormFillPage into submissionData when a form is
+        // filled from within a case (see FormDocumentCreationService.linkToCaseChecklist,
+        // the same convention this mirrors for the QR fast-path in ecm-batch).
+        Map<String, Object> data = submission.getSubmissionData();
+        if (data != null && data.get("_caseId") != null && data.get("_checklistItemId") != null) {
+            qrPayload.put("cid", data.get("_caseId").toString());
+            qrPayload.put("cki", data.get("_checklistItemId").toString());
+        }
+        return qrJsonToPng(qrPayload);
+    }
 
+    /**
+     * QR payload for a blank print — no sid (no submission exists yet) and no pid
+     * (no customer known yet). Scanning it back in can only resolve the form/category,
+     * never the customer — that still has to come from OCR/customer-matching.
+     */
+    private byte[] generateBlankQrCode(FormDefinition definition) {
+        Map<String, Object> qrPayload = new LinkedHashMap<>();
+        qrPayload.put("ecm", true);
+        qrPayload.put("fk", definition.getFormKey());
+        qrPayload.put("v", definition.getVersion());
+        qrPayload.put("fd", definition.getId().toString());
+        return qrJsonToPng(qrPayload);
+    }
+
+    private byte[] qrJsonToPng(Map<String, Object> qrPayload) {
+        try {
             String json = objectMapper.writeValueAsString(qrPayload);
 
             QRCodeWriter writer = new QRCodeWriter();

@@ -49,11 +49,12 @@ public class AiGatewayIntegrationController {
 
     private static final Logger log = LoggerFactory.getLogger(AiGatewayIntegrationController.class);
 
-    private static final String KEY_WEBHOOK_URL  = "ai.gateway.webhook.url";
-    private static final String KEY_HMAC_SECRET  = "ai.gateway.webhook.hmac.secret";
-    private static final String KEY_BASE_URL     = "ai.gateway.base.url";
+    private static final String KEY_WEBHOOK_URL    = "ai.gateway.webhook.url";
+    private static final String KEY_HMAC_SECRET    = "ai.gateway.webhook.hmac.secret";
+    private static final String KEY_BASE_URL       = "ai.gateway.base.url";
     private static final String KEY_OKTA_CLIENT_ID = "ai.gateway.okta.client.id";
-    private static final String KEY_OCR_ROUTE    = "ecm.ocr.route";
+    private static final String KEY_OKTA_SCOPE     = "ai.gateway.okta.scope";
+    private static final String KEY_OCR_ROUTE      = "ecm.ocr.route";
 
     private static final String INTEGRATION_SYSTEM_KEY = "AI_GATEWAY_OCR";
     private static final String SECRET_FIELD_OKTA_CLIENT_SECRET = "okta_client_secret";
@@ -97,6 +98,10 @@ public class AiGatewayIntegrationController {
         if (req.getOktaClientId() != null) {
             upsertTenantConfig(KEY_OKTA_CLIENT_ID, req.getOktaClientId().trim(),
                     "Okta API Services client_id for ecm-ocr-pipeline service JWT");
+        }
+        if (req.getOktaScope() != null) {
+            upsertTenantConfig(KEY_OKTA_SCOPE, req.getOktaScope().trim(),
+                    "OAuth2 scope(s) requested in the client_credentials token call (space-separated if multiple)");
         }
         if (req.getRoute() != null) {
             String route = req.getRoute().trim().toLowerCase();
@@ -144,14 +149,21 @@ public class AiGatewayIntegrationController {
     private void upsertOktaClientSecret(String plaintext) {
         IntegrationConfig cfg = integrationConfigRepo
                 .findByTenantIdAndSystemKey(DEFAULT_TENANT, INTEGRATION_SYSTEM_KEY)
-                .orElseGet(() -> IntegrationConfig.builder()
-                        .tenantId(DEFAULT_TENANT)
-                        .systemKey(INTEGRATION_SYSTEM_KEY)
-                        .displayName("AI Gateway (OCR)")
-                        .enabled(true)
-                        .config(new HashMap<>())
-                        .secrets(new HashMap<>())
-                        .build());
+                .orElseGet(() -> {
+                    IntegrationConfig row = IntegrationConfig.builder()
+                            .tenantId(DEFAULT_TENANT)
+                            .systemKey(INTEGRATION_SYSTEM_KEY)
+                            .displayName("AI Gateway (OCR)")
+                            .enabled(true)
+                            .config(new HashMap<>())
+                            .secrets(new HashMap<>())
+                            .build();
+                    // test_status has a NOT NULL constraint in integration_configs — seed with
+                    // "UNTESTED" on row creation. DocuSign avoids this via recordTestResult(),
+                    // but we don't have a connection-test flow yet.
+                    row.setTestStatus("UNTESTED");
+                    return row;
+                });
         Map<String, Object> secrets = new HashMap<>(cfg.getSecrets() != null ? cfg.getSecrets() : new HashMap<>());
         secrets.put(SECRET_FIELD_OKTA_CLIENT_SECRET, integrationConfigService.encrypt(plaintext));
         cfg.setSecrets(secrets);
@@ -166,6 +178,7 @@ public class AiGatewayIntegrationController {
         readTenantConfig(KEY_WEBHOOK_URL).ifPresent(out::setUrl);
         readTenantConfig(KEY_BASE_URL).ifPresent(out::setBaseUrl);
         readTenantConfig(KEY_OKTA_CLIENT_ID).ifPresent(out::setOktaClientId);
+        readTenantConfig(KEY_OKTA_SCOPE).ifPresent(out::setOktaScope);
         out.setRoute(readTenantConfig(KEY_OCR_ROUTE).orElse(DEFAULT_ROUTE));
 
         // HMAC secret (tenant_config, plaintext at rest, masked on read)

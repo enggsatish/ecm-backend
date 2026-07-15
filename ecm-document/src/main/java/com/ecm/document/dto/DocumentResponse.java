@@ -43,6 +43,12 @@ public record DocumentResponse(
         String  extractedText,
         String  extractedFields,        // ← Sprint-D: was on entity, now exposed in DTO
         String[] tags,
+
+        // ── v5.0: Storage & Classification ──────────────────────────────
+        String  classificationSource,
+        java.math.BigDecimal classificationConfidence,
+        String  lockType,
+
         Instant createdAt,
         Instant updatedAt,
 
@@ -54,5 +60,17 @@ public record DocumentResponse(
 
         // ── Sprint-D: viewer + party context ────────────────────────────────
         String  downloadUrl,            // synthesised by mapper via expression
-        String  partyExternalId         // ignored in mapper until V6 migration runs
+        String  partyExternalId,        // ignored in mapper until V6 migration runs
+
+        // ── Document locking ──────────────────────────────────────────────
+        String  lockedBy,               // email of user who locked/checked out
+        Instant lockedAt,
+        Instant lockExpiresAt,
+
+        // ── Pipeline state (data-driven visualization) ───────────────────
+        String  pipelineState,          // JSONB array of pipeline steps
+
+        // ── Case linkage (populated post-query, not from entity) ──────────
+        String  linkedCaseId,           // UUID of active case, null if not linked
+        String  linkedCaseAssignee      // name of current case assignee
 ) {}

@@ -1,7 +1,11 @@
 package com.ecm.workflow.listener;
 
 import com.ecm.workflow.model.entity.WorkflowDefinitionConfig;
+import com.ecm.workflow.model.entity.WorkflowSlaTracking;
+import com.ecm.workflow.model.entity.WorkflowTemplate;
 import com.ecm.workflow.repository.WorkflowDefinitionConfigRepository;
+import com.ecm.workflow.repository.WorkflowSlaTrackingRepository;
+import com.ecm.workflow.repository.WorkflowTemplateRepository;
 import com.ecm.workflow.service.WorkflowInstanceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,8 +14,10 @@ import org.slf4j.MDC;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -47,6 +53,8 @@ public class FormSubmittedListener {
 
     private final WorkflowDefinitionConfigRepository definitionConfigRepo;
     private final WorkflowInstanceService            workflowInstanceService;
+    private final WorkflowSlaTrackingRepository      slaTrackingRepo;
+    private final WorkflowTemplateRepository         templateRepo;
     private final RuntimeService                     runtimeService;
 
     @RabbitListener(queues = "ecm.workflow.form.submitted")
@@ -90,8 +98,37 @@ public class FormSubmittedListener {
             extraVars.put("formKey",       formKey != null ? formKey : "");
             extraVars.put("submittedBy",   submittedBy != null ? submittedBy : "");
 
-            workflowInstanceService.startFromFormSubmission(
+            UUID instanceId = workflowInstanceService.startFromFormSubmission(
                     submissionId, formKey, def, submittedBy, extraVars);
+
+            // Create SLA tracking record
+            if (instanceId != null) {
+                try {
+                    Optional<WorkflowTemplate> templateOpt = templateRepo.findByProcessKey(processKey);
+                    WorkflowTemplate template = templateOpt.orElse(null);
+                    int slaHours = template != null ? template.getSlaHours() : def.getSlaHours();
+                    int warnPct  = template != null ? template.getWarningThresholdPct() : 80;
+
+                    LocalDateTime now      = LocalDateTime.now();
+                    LocalDateTime deadline  = now.plusHours(slaHours);
+                    long warnMinutes       = (long)(slaHours * 60 * warnPct / 100.0);
+
+                    slaTrackingRepo.save(WorkflowSlaTracking.builder()
+                            .workflowInstanceId(instanceId)
+                            .template(template)
+                            .slaDeadline(deadline)
+                            .warningThresholdAt(now.plusMinutes(warnMinutes))
+                            .escalationDeadline(template != null && template.getEscalationHours() != null
+                                    ? deadline.plusHours(template.getEscalationHours()) : null)
+                            .status(WorkflowSlaTracking.Status.ON_TRACK)
+                            .build());
+
+                    log.info("SLA tracking created for form workflow: instanceId={}, deadline={}",
+                            instanceId, deadline);
+                } catch (Exception e) {
+                    log.warn("Failed to create SLA tracking for form workflow: {}", e.getMessage());
+                }
+            }
 
             log.info("Workflow started for form submission: submissionId={}, processKey={}",
                     submissionId, processKey);

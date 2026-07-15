@@ -17,7 +17,11 @@
     "test:notifications": "npx playwright test specs/06-notifications.spec.js",
     "test:roles": "npx playwright test specs/07-role-access.spec.js",
     "test:session": "npx playwright test specs/08-session-renewal.spec.js",
-    "setup": "npx playwright install chromium && node fixtures/setup-auth.js",
+    "test:case-worker": "npx playwright test specs/09-case-worker-flow.spec.js",
+    "test:locking": "npx playwright test specs/10-document-locking.spec.js",
+    "test:docusign": "npx playwright test specs/11-docusign-flow.spec.js",
+    "test:sla": "npx playwright test specs/12-sla-dashboard.spec.js",
+    "setup": "npx playwright install chromium && npx playwright test --project auth-setup",
     "report": "npx playwright show-report"
   },
   "devDependencies": {

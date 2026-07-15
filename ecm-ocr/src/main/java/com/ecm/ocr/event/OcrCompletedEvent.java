@@ -1,5 +1,6 @@
 package com.ecm.ocr.event;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
@@ -15,5 +16,10 @@ public record OcrCompletedEvent(
         Map<String, Object> extractedFields,
         boolean         tessUsed,
         int             pageCount,
-        OffsetDateTime  completedAt
+        OffsetDateTime  completedAt,
+        // Classification results (null if classification not attempted or failed)
+        Integer         classifiedCategoryId,
+        String          classificationSource,
+        BigDecimal      classificationConfidence,
+        String          detectedPartyExternalId
 ) {}

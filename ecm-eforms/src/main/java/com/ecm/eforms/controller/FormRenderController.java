@@ -3,6 +3,7 @@ package com.ecm.eforms.controller;
 import com.ecm.common.model.ApiResponse;
 import com.ecm.eforms.model.entity.FormDefinition;
 import com.ecm.eforms.service.FormDefinitionService;
+import com.ecm.eforms.service.PdfGenerationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +19,7 @@ import java.util.Map;
  * GET /api/eforms/render                       list PUBLISHED forms (form picker)
  * GET /api/eforms/render/{formKey}             latest PUBLISHED schema
  * GET /api/eforms/render/{formKey}/v/{version} specific version schema
+ * GET /api/eforms/render/{formKey}/blank-pdf   blank printable PDF (no data, no submission)
  *
  * Any authenticated ECM user can render a form (to fill it).
  * Non-privileged users are still blocked from managing definitions.
@@ -28,6 +30,7 @@ import java.util.Map;
 public class FormRenderController {
 
     private final FormDefinitionService definitionService;
+    private final PdfGenerationService  pdfService;
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
@@ -66,16 +69,31 @@ public class FormRenderController {
             buildRenderPayload(definitionService.getByFormKeyAndVersion(formKey, version))));
     }
 
+    @GetMapping("/{formKey}/blank-pdf")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<byte[]> getBlankPdf(@PathVariable String formKey) {
+        FormDefinition def = definitionService.getPublishedByFormKey(formKey);
+        byte[] pdf = pdfService.generateBlank(def);
+        String filename = formKey + "-blank.pdf";
+
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(pdf);
+    }
+
     private Map<String, Object> buildRenderPayload(FormDefinition def) {
-        return Map.of(
-            "formKey",        def.getFormKey(),
-            "name",           def.getName(),
-            "version",        def.getVersion(),
-            "status",         def.getStatus(),
-            "schema",         def.getSchema(),
-            "uiConfig",       def.getUiConfig()       != null ? def.getUiConfig()       : Map.of(),
-            "workflowConfig", def.getWorkflowConfig() != null ? def.getWorkflowConfig() : Map.of(),
-            "allowSaveDraft", def.getSchema() != null && def.getSchema().isAllowSaveDraft()
-        );
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("formKey",        def.getFormKey());
+        payload.put("name",           def.getName());
+        payload.put("version",        def.getVersion());
+        payload.put("status",         def.getStatus());
+        payload.put("documentCategoryId", def.getDocumentCategoryId());
+        payload.put("schema",         def.getSchema());
+        payload.put("uiConfig",       def.getUiConfig()       != null ? def.getUiConfig()       : Map.of());
+        payload.put("workflowConfig", def.getWorkflowConfig() != null ? def.getWorkflowConfig() : Map.of());
+        payload.put("docuSignConfig", def.getDocuSignConfig() != null ? def.getDocuSignConfig() : Map.of());
+        payload.put("allowSaveDraft", def.getSchema() != null && def.getSchema().isAllowSaveDraft());
+        return payload;
     }
 }

@@ -56,6 +56,12 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
     private static final String HDR_SUBJECT     = "X-ECM-Subject";
     private static final String HDR_EMAIL       = "X-ECM-Email";
 
+    // Internal service headers — must be stripped from ALL gateway-routed requests
+    // to prevent external clients from injecting service identity.
+    // These headers are only legitimate on direct service-to-service calls (not via gateway).
+    private static final String HDR_INTERNAL_SERVICE = "X-Internal-Service";
+    private static final String HDR_INTERNAL_TOKEN   = "X-Internal-Token";
+
     private final ReactiveStringRedisTemplate redis;
     private final IdentityEnrichmentClient    identityClient;
     private final ObjectMapper                objectMapper;
@@ -75,6 +81,18 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // DocuSign webhook + internal service endpoints — no JWT, HMAC-secured
+        // Still strip internal headers to prevent injection
+        if (path.startsWith("/api/eforms/docusign/")) {
+            ServerHttpRequest dsStripped = exchange.getRequest().mutate()
+                    .headers(h -> {
+                        h.remove(HDR_INTERNAL_SERVICE);
+                        h.remove(HDR_INTERNAL_TOKEN);
+                    })
+                    .build();
+            return chain.filter(exchange.mutate().request(dsStripped).build());
+        }
+
         // External participant endpoints — no JWT, OTP/session based auth.
         // Still strip X-ECM-* headers to prevent injection, then pass through
         // without enrichment (no JWT to enrich from).
@@ -85,18 +103,24 @@ public class EcmRoleEnrichmentFilter implements GlobalFilter, Ordered {
                         h.remove(HDR_PERMISSIONS);
                         h.remove(HDR_SUBJECT);
                         h.remove(HDR_EMAIL);
+                        h.remove(HDR_INTERNAL_SERVICE);
+                        h.remove(HDR_INTERNAL_TOKEN);
                     })
                     .build();
             return chain.filter(exchange.mutate().request(stripped).build());
         }
 
-        // STEP 1: Strip incoming X-ECM-* headers (prevent header injection by clients)
+        // STEP 1: Strip incoming headers that could be injected by external clients
+        // X-ECM-* — role/permission spoofing
+        // X-Internal-* — service identity spoofing (bypass JWT on downstream services)
         ServerHttpRequest stripped = exchange.getRequest().mutate()
                 .headers(h -> {
                     h.remove(HDR_ROLES);
                     h.remove(HDR_PERMISSIONS);
                     h.remove(HDR_SUBJECT);
                     h.remove(HDR_EMAIL);
+                    h.remove(HDR_INTERNAL_SERVICE);
+                    h.remove(HDR_INTERNAL_TOKEN);
                 })
                 .build();
         ServerWebExchange cleanExchange = exchange.mutate().request(stripped).build();

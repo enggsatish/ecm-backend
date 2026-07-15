@@ -53,6 +53,14 @@ Servus ECM is a white-label Enterprise Content Management platform targeting fin
 | Case-workflow integration (checklist bridge) | ecm-admin + ecm-workflow | Done |
 | Override / bypass system with audit trail | ecm-admin | Done |
 | SUPER_ADMIN role separation | ecm-identity + all | Done |
+| DocuSign eSignature (SDK-free REST API) | ecm-eforms | Done |
+| Document locking (checkout/checkin) | ecm-document | Done |
+| Case-based implicit document locking | ecm-document + ecm-admin | Done |
+| Document retention & archiving scheduler | ecm-document | Done |
+| Azure Document Intelligence OCR | ecm-ocr | Done |
+| SLA tracking & breach detection | ecm-workflow | Done |
+| Document pipeline visualization | Frontend | Done |
+| CSP security headers | ecm-common | Done |
 
 ---
 
@@ -376,6 +384,44 @@ sequenceDiagram
     GW->>GW: Route to downstream service (with enriched headers)
 
     Note over GW: Downstream EcmJwtConverter reads<br/>X-ECM-Roles → Spring GrantedAuthority<br/>@PreAuthorize checks work against DB roles
+```
+
+### 8. DocuSign Signing Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as React Frontend
+    participant GW as Gateway :8080
+    participant Admin as ecm-admin :8086
+    participant EF as ecm-eforms :8084
+    participant DS as DocuSign API
+    participant DB as PostgreSQL
+
+    Note over UI: Case Worker sends document for signature
+
+    UI->>GW: 1. POST /cases/{id}/checklist/{itemId}/send-for-signature
+    GW->>Admin: 2. Forward {signerEmail, placement, requireInitials}
+    Admin->>EF: 3. POST /api/eforms/docusign/create-envelope {documentId, recipientEmail, placement}
+    EF->>EF: 4. Fetch PDF from ecm-document
+    EF->>EF: 5. Build envelope JSON (placement tabs, branding from config)
+    EF->>EF: 6. JWT Grant auth (RS256, cached token)
+    EF->>DS: 7. POST /v2.1/accounts/{id}/envelopes
+    DS-->>EF: 8. {envelopeId, status: "sent"}
+    EF->>DB: 9. UPDATE documents SET status='PENDING_SIGNATURE'
+    EF-->>Admin: 10. {envelopeId}
+    Admin->>DB: 11. UPDATE case_documents SET status='PENDING_SIGNATURE'
+    Admin-->>UI: 12. Updated case
+
+    Note over DS: Signer receives email, signs document
+
+    DS->>GW: 13. POST /api/eforms/docusign/webhook (HMAC signed)
+    GW->>EF: 14. Forward (permitAll — no JWT required)
+    EF->>EF: 15. Validate HMAC (or warn in dev mode)
+    EF->>DB: 16. INSERT docusign_events (idempotency)
+    EF->>DS: 17. GET /v2.1/.../documents/combined (download signed PDF)
+    EF->>EF: 18. Upload signed PDF via DocumentPromotionClient
+    EF->>DB: 19. Replace document blob, status='ACTIVE'
+    EF->>DB: 20. UPDATE form_submissions SET status='SIGNED'
 ```
 
 ---
@@ -750,7 +796,7 @@ erDiagram
     documents {
         UUID id PK
         VARCHAR display_name
-        VARCHAR status "PENDING_OCR→ACTIVE→ARCHIVED"
+        VARCHAR status "PENDING_OCR|ACTIVE|PENDING_SIGNATURE|SIGNED|SIGN_DECLINED|ARCHIVED|DELETED|PURGED"
         INT category_id "soft ref"
         INT department_id FK
         INT uploaded_by FK
@@ -758,6 +804,14 @@ erDiagram
         UUID parent_doc_id FK
         TEXT extracted_text
         JSONB extracted_fields
+        VARCHAR locked_by
+        TIMESTAMP locked_at
+        TIMESTAMP lock_expires_at
+        TIMESTAMP archived_at
+        VARCHAR archived_by
+        TIMESTAMP deleted_at
+        VARCHAR delete_reason
+        LONG opt_lock_version
     }
 
     documents }o--|| departments : scoped_to
@@ -775,9 +829,14 @@ erDiagram
         UUID party_id FK
         INT product_id "soft ref"
         VARCHAR case_type
-        VARCHAR status "NEW→IN_PROGRESS→APPROVED→COMPLETED"
+        VARCHAR status "NEW|IN_PROGRESS|REVIEW_PENDING|UNDER_REVIEW|PENDING_APPROVAL|APPROVED|COMPLETED|REJECTED|CANCELLED|ON_HOLD"
         VARCHAR assigned_to
+        VARCHAR assigned_to_name
+        VARCHAR assigned_to_group
         VARCHAR claimed_by
+        VARCHAR claimed_by_name
+        TIMESTAMP claimed_at
+        BOOLEAN returned_from_review
         VARCHAR process_instance_id
     }
 
@@ -978,9 +1037,12 @@ erDiagram
     integration_configs {
         SERIAL id PK
         VARCHAR tenant_id
-        VARCHAR system_key
-        JSONB config
+        VARCHAR system_key "DOCUSIGN|OCR"
+        JSONB config "base_url, account_id, company_name, email templates"
+        JSONB secrets "AES-256-GCM encrypted: RSA key, HMAC secret"
         BOOLEAN enabled
+        VARCHAR test_status
+        TIMESTAMP tested_at
     }
 
     ocr_templates }o--|| document_categories : for_category
@@ -1085,8 +1147,11 @@ erDiagram
         VARCHAR form_key
         JSONB submission_data
         UUID party_id "soft ref"
-        VARCHAR status "DRAFT→SUBMITTED→APPROVED"
+        VARCHAR status "DRAFT|SUBMITTED|PENDING_SIGNATURE|SIGNED|SIGN_DECLINED|IN_REVIEW|APPROVED|REJECTED"
         VARCHAR docusign_envelope_id
+        VARCHAR docusign_status
+        TIMESTAMP docusign_completed_at
+        UUID signed_document_id
         VARCHAR workflow_instance_id
     }
 
@@ -1143,8 +1208,10 @@ Exchange: ecm.eforms  (topic, durable)  — owned by ecm-eforms
 Exchange: ecm.workflow  (topic, durable)  — owned by ecm-workflow
   ├── Routing key: workflow.task.assigned → Queue: ecm.notification.task.assigned
   │                                         Consumer: ecm-notification → in-app + email to candidate group
-  └── Routing key: workflow.completed     → Queue: ecm.notification.workflow.completed
-                                            Consumer: ecm-notification → in-app + email to submitter
+  ├── Routing key: workflow.completed     → Queue: ecm.notification.workflow.completed
+  │                                         Consumer: ecm-notification → in-app + email to submitter
+  └── Routing key: workflow.completed     → Queue: ecm.eforms.workflow.completed
+                                            Consumer: ecm-eforms (WorkflowCompletedListener → document promotion)
 
 Exchange: ecm.notifications  (topic, durable)  — owned by ecm-notification
   └── Routing key: notification.email → Queue: ecm.notification.email
@@ -1254,6 +1321,97 @@ ANY (except COMPLETED/CANCELLED) → CANCELLED  (manual: admin, requires reason)
 ### Case Timeline Events
 
 `CASE_CREATED` · `CASE_STATUS_CHANGED` · `CHECKLIST_ITEM_UPLOADED` · `CHECKLIST_ITEM_APPROVED` · `CHECKLIST_ITEM_REJECTED` · `CHECKLIST_ITEM_WAIVED` · `WORKFLOW_STARTED` · `WORKFLOW_COMPLETED` · `OVERRIDE_REQUESTED` · `OVERRIDE_APPROVED` · `OVERRIDE_DENIED` · `ADMIN_BYPASS` · `CASE_NOTE_ADDED`
+
+---
+
+## DocuSign Integration
+
+### Architecture — SDK-Free REST API
+
+The platform integrates with DocuSign eSignature using **direct REST API calls** instead of the DocuSign Java SDK. This eliminates dependency conflicts (Jersey, Oltu OAuth2) and provides full control over the HTTP layer.
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `DocuSignService` | ecm-eforms | JWT Grant auth, envelope creation, PDF download |
+| `DocuSignWebhookController` | ecm-eforms | Receives Connect webhooks, processes signing events |
+| `DocuSignDelegate` | ecm-workflow | Flowable JavaDelegate for BPMN DocuSign steps |
+| `CaseService.sendChecklistItemForSignature` | ecm-admin | Case-based signature requests |
+| `DocuSignConfigController` | ecm-admin | Admin UI config (test connection proxied to ecm-eforms) |
+
+### Authentication Flow
+
+1. Read RSA private key from `integration_configs.secrets` (AES-256-GCM encrypted)
+2. Build JWT assertion: `iss=integrationKey, sub=userId, aud=authServer, scope=signature impersonation`
+3. Sign with RS256 using `java.security` (no external libraries)
+4. Exchange JWT for access token via `POST {authServer}/oauth/token`
+5. Cache token (1-hour validity, 5-minute safety margin)
+
+### Envelope Creation Options
+
+| Placement | Description | Use Case |
+|-----------|-------------|----------|
+| `auto` | Detect `/sig1/`, `/init1/` anchor markers in PDF | Form-generated PDFs with eSign fields |
+| `lastPage` | Bottom of last page (default) | Uploaded documents without anchors |
+| `specific` | Custom page, x, y coordinates | Precise placement needed |
+
+### Email Branding (Configurable)
+
+Admin → Integrations → DocuSign → Email Branding section.
+Supports tokens: `{companyName}`, `{documentName}`, `{signerName}`, `{signerEmail}`
+
+### Webhook Processing
+
+1. DocuSign Connect sends POST to `/api/eforms/docusign/webhook`
+2. Gateway permits without JWT (HMAC-secured)
+3. HMAC validation: warn-only in dev, enforce in production
+4. Idempotency: `docusign_events` table prevents duplicate processing
+5. Events: `envelope-completed` → download signed PDF, replace document, mark SIGNED
+6. Events: `envelope-declined` → mark SIGN_DECLINED
+7. Events: `envelope-voided` → reset to ACTIVE
+
+### Document Status Flow (eSign)
+
+```
+PENDING_OCR → ACTIVE → PENDING_SIGNATURE → ACTIVE (signed PDF replaces original)
+                                         → SIGN_DECLINED
+```
+
+---
+
+## Document Locking
+
+### Explicit Locking (Checkout/Checkin)
+
+Any user with document permissions can lock a document for exclusive review:
+- `POST /api/documents/{id}/checkout` → sets `locked_by`, `lock_expires_at` (1 hour)
+- `POST /api/documents/{id}/release` → clears lock
+- Same user re-locking extends the expiry (idempotent)
+- Lock conflict: if someone else has it locked, you get a 400 error
+
+### Case-Based Implicit Locking
+
+Documents linked to active cases are protected by case assignment:
+- Only the case assignee or claimer can delete/archive/send-for-signature
+- Locking (checkout) is allowed for any user (review action, not destructive)
+- When case reaches terminal state (COMPLETED, REJECTED, CANCELLED), all document locks are auto-released
+- `DocumentStateGuard.assertCanModify()` enforces ownership
+
+### Lock Enforcement Matrix
+
+| Action | Unlocked | Locked by me | Locked by other | In active case (not assignee) |
+|--------|----------|-------------|-----------------|-------------------------------|
+| View/Download | Yes | Yes | Yes | Yes |
+| Lock | Yes | Extend | Blocked | Yes |
+| Unlock | N/A | Yes | Blocked | N/A |
+| Delete | Yes | Yes | Blocked | Blocked |
+| Archive | Yes | Yes | Blocked | Blocked |
+| Send for Signature | Yes | Yes | Blocked | Blocked |
+
+### Auto-expiry
+
+- Locks expire after 1 hour (`LOCK_DURATION_HOURS`)
+- `RetentionScheduler` daily job cleans up expired locks
+- Case completion auto-releases all linked document locks
 
 ---
 

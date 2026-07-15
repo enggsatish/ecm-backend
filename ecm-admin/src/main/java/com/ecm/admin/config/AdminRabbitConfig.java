@@ -22,6 +22,11 @@ public class AdminRabbitConfig {
     public static final String WORKFLOW_EXCHANGE     = "ecm.workflow";
     public static final String Q_WORKFLOW_COMPLETED  = "ecm.admin.workflow.completed";
 
+    // Document exchange — ecm-admin listens for document.classified events (case auto-attach)
+    public static final String DOCUMENT_EXCHANGE         = "ecm.documents";
+    public static final String Q_DOCUMENT_CLASSIFIED     = "ecm.admin.document.classified";
+    public static final String RK_DOCUMENT_CLASSIFIED    = "document.classified";
+
     @Bean
     TopicExchange adminExchange() {
         return ExchangeBuilder.topicExchange(ADMIN_EXCHANGE).durable(true).build();
@@ -35,6 +40,7 @@ public class AdminRabbitConfig {
     @Bean Queue userDeactivatedQueue() { return QueueBuilder.durable(Q_USER_DEACTIVATED).build(); }
     @Bean Queue categoryUpdatedQueue() { return QueueBuilder.durable(Q_CATEGORY_UPDATED).build(); }
     @Bean Queue workflowCompletedQueue() { return QueueBuilder.durable(Q_WORKFLOW_COMPLETED).build(); }
+    @Bean Queue documentClassifiedQueue() { return QueueBuilder.durable(Q_DOCUMENT_CLASSIFIED).build(); }
 
     @Bean
     Binding userDeactivatedBinding(TopicExchange adminExchange) {
@@ -49,6 +55,16 @@ public class AdminRabbitConfig {
     @Bean
     Binding workflowCompletedBinding(Queue workflowCompletedQueue, TopicExchange workflowExchange) {
         return BindingBuilder.bind(workflowCompletedQueue).to(workflowExchange).with("workflow.completed");
+    }
+
+    @Bean
+    TopicExchange documentExchange() {
+        return ExchangeBuilder.topicExchange(DOCUMENT_EXCHANGE).durable(true).build();
+    }
+
+    @Bean
+    Binding documentClassifiedBinding(Queue documentClassifiedQueue, TopicExchange documentExchange) {
+        return BindingBuilder.bind(documentClassifiedQueue).to(documentExchange).with(RK_DOCUMENT_CLASSIFIED);
     }
 
     @Bean

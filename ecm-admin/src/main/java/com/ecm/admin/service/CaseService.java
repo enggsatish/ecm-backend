@@ -1,6 +1,7 @@
 package com.ecm.admin.service;
 
 import com.ecm.admin.dto.CaseDto.*;
+import com.ecm.common.model.PagedResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -72,8 +73,10 @@ public class CaseService {
     }
 
     @Transactional(readOnly = true)
-    public List<CaseResponse> list(String status, UUID partyId, String search, String caseType) {
-        StringBuilder sql = new StringBuilder("SELECT " + CASE_SELECT_COLS + """
+    public PagedResult<CaseResponse> list(String status, UUID partyId, String search, String caseType,
+                                           String assignedTo, String assignedToGroup, Boolean unclaimed,
+                                           int page, int size) {
+        StringBuilder where = new StringBuilder("""
             FROM ecm_core.cases c
             LEFT JOIN ecm_core.parties p ON p.id = c.party_id
             LEFT JOIN ecm_admin.products pr ON pr.id = c.product_id
@@ -82,28 +85,56 @@ public class CaseService {
         List<Object> params = new ArrayList<>();
 
         if (status != null && !status.isBlank()) {
-            sql.append(" AND c.status = ?");
+            where.append(" AND c.status = ?");
             params.add(status);
         }
         if (partyId != null) {
-            sql.append(" AND c.party_id = ?");
+            where.append(" AND c.party_id = ?");
             params.add(partyId);
         }
         if (caseType != null && !caseType.isBlank()) {
-            sql.append(" AND c.case_type = ?");
+            where.append(" AND c.case_type = ?");
             params.add(caseType);
         }
+        if (assignedTo != null && !assignedTo.isBlank()) {
+            where.append(" AND (c.assigned_to = ? OR c.claimed_by = ?)");
+            params.add(assignedTo);
+            params.add(assignedTo);
+        }
+        if (assignedToGroup != null && !assignedToGroup.isBlank()) {
+            where.append(" AND c.assigned_to_group = ?");
+            params.add(assignedToGroup);
+        }
+        if (Boolean.TRUE.equals(unclaimed)) {
+            where.append(" AND c.assigned_to_group IS NOT NULL AND (c.claimed_by IS NULL OR c.claimed_by = '')");
+        }
         if (search != null && !search.isBlank()) {
-            sql.append(" AND (c.external_ref ILIKE ? OR p.display_name ILIKE ? OR p.external_id ILIKE ? OR pr.display_name ILIKE ?)");
+            where.append(" AND (c.external_ref ILIKE ? OR p.display_name ILIKE ? OR p.external_id ILIKE ? OR pr.display_name ILIKE ?)");
             String like = "%" + search.trim() + "%";
             params.add(like);
             params.add(like);
             params.add(like);
             params.add(like);
         }
-        sql.append(" ORDER BY c.created_at DESC LIMIT 100");
 
-        return jdbc.query(sql.toString(), (rs, rowNum) -> mapCaseRow(rs), params.toArray());
+        // Count query
+        String countSql = "SELECT COUNT(*) " + where;
+        long total = jdbc.queryForObject(countSql, Long.class, params.toArray());
+
+        // Data query with pagination
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size, 100)); // cap at 100
+        int offset = safePage * safeSize;
+
+        String dataSql = "SELECT " + CASE_SELECT_COLS + where
+                + " ORDER BY c.created_at DESC LIMIT ? OFFSET ?";
+        List<Object> dataParams = new ArrayList<>(params);
+        dataParams.add(safeSize);
+        dataParams.add(offset);
+
+        List<CaseResponse> content = jdbc.query(dataSql, (rs, rowNum) -> mapCaseRow(rs), dataParams.toArray());
+
+        return PagedResult.of(content, safePage, safeSize, total);
     }
 
     // ── Get by ID (with checklist) ───────────────────────────────────────────
@@ -213,10 +244,16 @@ public class CaseService {
     public CaseResponse updateStatus(UUID caseId, UpdateCaseStatusRequest req,
                                      String callerSub, String callerEmail) {
         // Enforce: if case is assigned to a group, the caller must have claimed it
-        // (or be the direct assignee). Admins can bypass this check.
+        // (or be the direct assignee).
+        // Exceptions:
+        //   - "Pick Up for Review" (UNDER_REVIEW) auto-claims like "Start Working"
+        //   - Admins can always act
+        boolean isPickUp = "UNDER_REVIEW".equals(req.status());
+        boolean isClaimTransition = "IN_PROGRESS".equals(req.status()) || isPickUp;
+
         try {
             var caseRow = jdbc.queryForMap(
-                    "SELECT assigned_to, assigned_to_group, claimed_by FROM ecm_core.cases WHERE id = ?", caseId);
+                    "SELECT assigned_to, assigned_to_group, claimed_by, status FROM ecm_core.cases WHERE id = ?", caseId);
             String assignedTo = (String) caseRow.get("assigned_to");
             String assignedGroup = (String) caseRow.get("assigned_to_group");
             String claimedBy = (String) caseRow.get("claimed_by");
@@ -224,13 +261,19 @@ public class CaseService {
             boolean isAssigned = (assignedTo != null && !assignedTo.isBlank())
                     || (assignedGroup != null && !assignedGroup.isBlank());
 
-            if (isAssigned) {
+            // Skip ownership check for claim-like transitions (Start Working, Pick Up for Review)
+            // These transitions auto-claim the case to the caller
+            if (isAssigned && !isClaimTransition) {
                 // Direct assignee can act
-                boolean isDirectAssignee = callerSub.equals(assignedTo) || callerEmail.equals(assignedTo);
+                boolean isDirectAssignee = (callerSub != null && callerSub.equals(assignedTo))
+                        || (callerEmail != null && callerEmail.equals(assignedTo));
                 // Claimer can act
-                boolean isClaimer = callerSub.equals(claimedBy) || callerEmail.equals(claimedBy);
+                boolean isClaimer = (callerSub != null && callerSub.equals(claimedBy))
+                        || (callerEmail != null && callerEmail.equals(claimedBy));
+                // Admin bypass
+                boolean isAdmin = isUserAdmin(callerEmail);
 
-                if (!isDirectAssignee && !isClaimer) {
+                if (!isDirectAssignee && !isClaimer && !isAdmin) {
                     throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                             "This case is assigned to " +
                             (assignedGroup != null ? "group " + assignedGroup : assignedTo) +
@@ -246,6 +289,8 @@ public class CaseService {
         // Determine if this is a "return" transition (moving back to IN_PROGRESS from review/approval)
         boolean isReturn = "IN_PROGRESS".equals(req.status()) && req.comment() != null && !req.comment().isBlank();
         boolean isTerminal = List.of("COMPLETED", "APPROVED", "REJECTED", "CANCELLED").contains(req.status());
+        boolean isStartWorking = ("IN_PROGRESS".equals(req.status()) && !isReturn)
+                || "UNDER_REVIEW".equals(req.status()); // Pick Up for Review also auto-claims
 
         int rows = jdbc.update("""
             UPDATE ecm_core.cases
@@ -257,19 +302,28 @@ public class CaseService {
                 assigned_to = CASE WHEN ? THEN NULL ELSE assigned_to END,
                 assigned_to_name = CASE WHEN ? THEN NULL ELSE assigned_to_name END,
                 assigned_to_group = CASE WHEN ? THEN NULL ELSE assigned_to_group END,
-                claimed_by = CASE WHEN ? THEN NULL ELSE claimed_by END,
-                claimed_by_name = CASE WHEN ? THEN NULL ELSE claimed_by_name END,
-                claimed_at = CASE WHEN ? THEN NULL ELSE claimed_at END
+                claimed_by = CASE WHEN ? THEN NULL WHEN ? THEN ? ELSE claimed_by END,
+                claimed_by_name = CASE WHEN ? THEN NULL WHEN ? THEN ? ELSE claimed_by_name END,
+                claimed_at = CASE WHEN ? THEN NULL WHEN ? THEN NOW() ELSE claimed_at END
             WHERE id = ?
             """, req.status(), isReturn, req.status(), req.status(),
-                isTerminal, isTerminal, isTerminal, isTerminal, isTerminal, isTerminal,
+                isTerminal, isTerminal, isTerminal,
+                isTerminal, isStartWorking, callerEmail,
+                isTerminal, isStartWorking, callerEmail != null ? callerEmail.split("@")[0] : callerSub,
+                isTerminal, isStartWorking,
                 caseId);
 
         if (rows == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Case not found");
-        log.info("Case status updated: id={}, status={}, returned={}, terminal={}", caseId, req.status(), isReturn, isTerminal);
+        log.info("Case status updated: id={}, status={}, returned={}, terminal={}, startWorking={}",
+                caseId, req.status(), isReturn, isTerminal, isStartWorking);
         recordTimelineEvent(caseId, "CASE_STATUS_CHANGED",
                 "Status changed to: " + req.status(),
                 req.comment(), callerEmail != null ? callerEmail : callerSub);
+
+        // Auto-assign to reviewer group when submitted for review
+        if ("REVIEW_PENDING".equals(req.status())) {
+            autoAssignToReviewerGroup(caseId, callerEmail);
+        }
 
         // Update enrollment status based on case outcome
         if ("COMPLETED".equals(req.status()) || "APPROVED".equals(req.status())) {
@@ -293,6 +347,22 @@ public class CaseService {
                 WHERE case_id = ? AND status = 'PENDING'
                 """, caseId);
             log.info("Enrollment cancelled for case {}", caseId);
+        }
+
+        // Release document locks when case reaches terminal state
+        if (isTerminal) {
+            int unlocked = jdbc.update("""
+                UPDATE ecm_core.documents
+                SET locked_by = NULL, locked_at = NULL, lock_expires_at = NULL, updated_at = NOW()
+                WHERE id IN (
+                    SELECT cd.document_id::uuid FROM ecm_core.case_documents cd
+                    WHERE cd.case_id = ? AND cd.document_id IS NOT NULL
+                )
+                AND locked_by IS NOT NULL
+                """, caseId);
+            if (unlocked > 0) {
+                log.info("Auto-unlocked {} document(s) for completed case {}", unlocked, caseId);
+            }
         }
 
         // Cancel active workflows when case is closed
@@ -572,56 +642,12 @@ public class CaseService {
                     req.verifiedItemIds().size() + " item(s) verified", null, verifiedBy);
         }
 
-        // Check if all required items are verified → auto-transition to UNDER_REVIEW
-        List<Map<String, Object>> requiredItems = jdbc.queryForList("""
-            SELECT cd.id, cd.is_verified, pdt.is_required
-            FROM ecm_core.case_documents cd
-            JOIN ecm_admin.product_document_types pdt ON pdt.id = cd.product_document_type_id
-            WHERE cd.case_id = ? AND pdt.is_required = true
-            """, caseId);
+        // No auto-transition — case worker manually clicks "Submit for Review" when ready.
+        // Verification is a checkpoint, not a trigger.
 
-        boolean allRequiredVerified = !requiredItems.isEmpty() &&
-                requiredItems.stream().allMatch(r -> Boolean.TRUE.equals(r.get("is_verified")));
-
-        if (allRequiredVerified) {
-            // Auto-transition: all verified → move to REVIEW_PENDING (review lobby)
-            jdbc.update("""
-                UPDATE ecm_core.cases SET status = 'REVIEW_PENDING', returned_from_review = false, updated_at = NOW()
-                WHERE id = ? AND status IN ('NEW', 'IN_PROGRESS')
-                """, caseId);
-
-            // Assign if specified
-            if (req.assignToGroup() != null && !req.assignToGroup().isBlank()) {
-                jdbc.update("""
-                    UPDATE ecm_core.cases
-                    SET assigned_to_group = ?, assigned_to = NULL, assigned_to_name = NULL,
-                        claimed_by = NULL, claimed_by_name = NULL, claimed_at = NULL
-                    WHERE id = ?
-                    """, req.assignToGroup(), caseId);
-                recordTimelineEvent(caseId, "CASE_STATUS_CHANGED",
-                        "All required items verified. Case moved to UNDER_REVIEW, assigned to group: " + req.assignToGroup(),
-                        null, verifiedBy);
-            } else if (req.assignTo() != null && !req.assignTo().isBlank()) {
-                jdbc.update("""
-                    UPDATE ecm_core.cases
-                    SET assigned_to = ?, assigned_to_name = ?,
-                        assigned_to_group = NULL, claimed_by = NULL, claimed_by_name = NULL, claimed_at = NULL
-                    WHERE id = ?
-                    """, req.assignTo(), req.assignToName(), caseId);
-                recordTimelineEvent(caseId, "CASE_STATUS_CHANGED",
-                        "All required items verified. Case moved to UNDER_REVIEW, assigned to: " +
-                        (req.assignToName() != null ? req.assignToName() : req.assignTo()),
-                        null, verifiedBy);
-            } else {
-                recordTimelineEvent(caseId, "CASE_STATUS_CHANGED",
-                        "All required items verified. Case moved to UNDER_REVIEW.",
-                        null, verifiedBy);
-            }
-        }
-
-        log.info("Verification saved: caseId={}, verified={}, allRequiredDone={}, by={}",
+        log.info("Verification saved: caseId={}, verified={}, by={}",
                 caseId, req.verifiedItemIds() != null ? req.verifiedItemIds().size() : 0,
-                allRequiredVerified, verifiedBy);
+                verifiedBy);
         return getById(caseId);
     }
 
@@ -694,6 +720,114 @@ public class CaseService {
                 req.comment(), actor);
 
         log.info("Additional docs requested: caseId={}, categories={}, by={}", caseId, req.categoryIds(), actor);
+        return getById(caseId);
+    }
+
+    /**
+     * Mark a checklist item as complete (self-certified by case worker).
+     * Status: UPLOADED → APPROVED
+     */
+    @Transactional
+    public CaseResponse completeChecklistItem(UUID caseId, Integer itemId, String completedBy) {
+        jdbc.update("""
+            UPDATE ecm_core.case_documents
+            SET status = 'APPROVED', reviewed_by = ?, reviewed_at = NOW(), updated_at = NOW()
+            WHERE id = ? AND case_id = ? AND status IN ('UPLOADED', 'PENDING')
+            """, completedBy, itemId, caseId);
+
+        recordTimelineEvent(caseId, "CHECKLIST_ITEM_APPROVED",
+                "Checklist item marked complete (self-certified)", null, completedBy);
+
+        log.info("Checklist item completed: caseId={}, itemId={}, by={}", caseId, itemId, completedBy);
+        return getById(caseId);
+    }
+
+    /**
+     * Reopen a completed checklist item for re-review.
+     * Status: APPROVED → UPLOADED (document stays linked)
+     */
+    @Transactional
+    public CaseResponse reopenChecklistItem(UUID caseId, Integer itemId, String reopenedBy) {
+        jdbc.update("""
+            UPDATE ecm_core.case_documents
+            SET status = 'UPLOADED', reviewed_by = NULL, reviewed_at = NULL, updated_at = NOW()
+            WHERE id = ? AND case_id = ? AND status = 'APPROVED'
+            """, itemId, caseId);
+
+        recordTimelineEvent(caseId, "CHECKLIST_ITEM_REOPENED",
+                "Checklist item reopened for re-review", null, reopenedBy);
+
+        log.info("Checklist item reopened: caseId={}, itemId={}, by={}", caseId, itemId, reopenedBy);
+        return getById(caseId);
+    }
+
+    /**
+     * Add a new checklist item to a case.
+     * Used by case workers who need additional documents beyond the product template.
+     */
+    @Transactional
+    public CaseResponse addChecklistItem(UUID caseId,
+                                          com.ecm.admin.controller.CaseController.AddChecklistItemRequest req,
+                                          String actor) {
+        // Get product ID for this case
+        Integer productId = jdbc.queryForObject(
+                "SELECT product_id FROM ecm_core.cases WHERE id = ?", Integer.class, caseId);
+
+        Integer pdtId;
+        String itemName;
+
+        if (req.categoryId() != null) {
+            // Category-based: find or create product_document_type
+            String catName = jdbc.queryForObject(
+                    "SELECT name FROM ecm_admin.document_categories WHERE id = ?", String.class, req.categoryId());
+            String catCode = jdbc.queryForObject(
+                    "SELECT code FROM ecm_admin.document_categories WHERE id = ?", String.class, req.categoryId());
+            itemName = catName;
+
+            try {
+                pdtId = jdbc.queryForObject("""
+                    SELECT id FROM ecm_admin.product_document_types
+                    WHERE product_id = ? AND category_id = ? AND is_active = true
+                    ORDER BY id LIMIT 1
+                    """, Integer.class, productId, req.categoryId());
+            } catch (Exception e) {
+                pdtId = jdbc.queryForObject("""
+                    INSERT INTO ecm_admin.product_document_types
+                        (product_id, category_id, name, code, source_type, on_upload_action, is_required, sort_order)
+                    VALUES (?, ?, ?, ?, 'UPLOAD', 'OCR_ONLY', ?, 99)
+                    RETURNING id
+                    """, Integer.class, productId, req.categoryId(),
+                        catName, "ADDL_" + catCode + "_" + System.currentTimeMillis() % 10000,
+                        req.isRequired());
+            }
+        } else if (req.customName() != null && !req.customName().isBlank()) {
+            // Custom name: create an ad-hoc product_document_type with no category
+            itemName = req.customName();
+            pdtId = jdbc.queryForObject("""
+                INSERT INTO ecm_admin.product_document_types
+                    (product_id, category_id, name, code, source_type, on_upload_action, is_required, sort_order)
+                VALUES (?, NULL, ?, ?, 'UPLOAD', 'NONE', ?, 99)
+                RETURNING id
+                """, Integer.class, productId,
+                    req.customName(),
+                    "CUSTOM_" + System.currentTimeMillis() % 100000,
+                    req.isRequired());
+        } else {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Either categoryId or customName is required");
+        }
+
+        // Add to case checklist
+        jdbc.update("""
+            INSERT INTO ecm_core.case_documents (case_id, product_document_type_id, status)
+            VALUES (?, ?, 'PENDING')
+            """, caseId, pdtId);
+
+        recordTimelineEvent(caseId, "CHECKLIST_ITEM_ADDED",
+                "Document request added: " + itemName, null, actor);
+
+        log.info("Checklist item added: caseId={}, item={}, by={}", caseId, itemName, actor);
         return getById(caseId);
     }
 
@@ -786,10 +920,54 @@ public class CaseService {
                     """, caseId);
                 recordTimelineEvent(caseId, "CASE_STATUS_CHANGED",
                         "All required documents satisfied — case moved to Review Queue", null, "system");
+                autoAssignToReviewerGroup(caseId, "system");
                 log.info("Case {} auto-transitioned to REVIEW_PENDING (all required items satisfied)", caseId);
             }
         } catch (Exception e) {
             log.error("Failed to check auto-transition for case {}: {}", caseId, e.getMessage());
+        }
+    }
+
+    /**
+     * Auto-assign case to ECM_REVIEWER group when moving to REVIEW_PENDING.
+     * Only assigns if not already assigned to a specific person or group.
+     */
+    private void autoAssignToReviewerGroup(UUID caseId, String actor) {
+        try {
+            int updated = jdbc.update("""
+                UPDATE ecm_core.cases
+                SET assigned_to_group = 'ECM_REVIEWER',
+                    assigned_to = NULL, assigned_to_name = NULL,
+                    claimed_by = NULL, claimed_by_name = NULL, claimed_at = NULL,
+                    updated_at = NOW()
+                WHERE id = ? AND (assigned_to_group IS NULL OR assigned_to_group = '')
+                """, caseId);
+
+            if (updated > 0) {
+                recordTimelineEvent(caseId, "CASE_ASSIGNED",
+                        "Auto-assigned to ECM_REVIEWER group for review", null,
+                        actor != null ? actor : "system");
+
+                // Publish assignment event for notifications
+                try {
+                    var caseRow = jdbc.queryForMap(
+                            "SELECT external_ref FROM ecm_core.cases WHERE id = ?", caseId);
+                    String caseRef = (String) caseRow.get("external_ref");
+
+                    Map<String, Object> event = new java.util.HashMap<>();
+                    event.put("caseId", caseId.toString());
+                    event.put("caseRef", caseRef != null ? caseRef : "");
+                    event.put("assignedToGroup", "ECM_REVIEWER");
+                    event.put("assignedBy", actor != null ? actor : "system");
+                    rabbitTemplate.convertAndSend("ecm.admin", "case.assigned", event);
+                } catch (Exception e) {
+                    log.debug("Failed to publish case.assigned event for auto-assign: {}", e.getMessage());
+                }
+
+                log.info("Case {} auto-assigned to ECM_REVIEWER group", caseId);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to auto-assign case {} to reviewer group: {}", caseId, e.getMessage());
         }
     }
 
@@ -840,6 +1018,21 @@ public class CaseService {
 
     /** Record a timeline event */
     @Transactional
+    private boolean isUserAdmin(String email) {
+        if (email == null) return false;
+        try {
+            Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM ecm_core.user_roles ur
+                JOIN ecm_core.users u ON u.id = ur.user_id
+                JOIN ecm_core.roles r ON r.id = ur.role_id
+                WHERE u.email = ? AND r.name IN ('ECM_ADMIN', 'ECM_SUPER_ADMIN')
+                """, Integer.class, email);
+            return count != null && count > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public void recordTimelineEvent(UUID caseId, String eventType, String description,
                                      String detail, String actor) {
         jdbc.update("""
@@ -1098,6 +1291,92 @@ public class CaseService {
         return getById(caseId);
     }
 
+    /**
+     * Send a checklist item's document for DocuSign signature.
+     * Calls ecm-eforms DocuSign API to create an envelope.
+     */
+    @Transactional
+    public CaseResponse sendChecklistItemForSignature(UUID caseId, Integer itemId,
+                                                       com.ecm.admin.controller.CaseController.SendForSignatureRequest req,
+                                                       String sentBy) {
+        // Get the document linked to this checklist item
+        var items = jdbc.query("""
+            SELECT cd.document_id, cd.status, d.name as doc_name
+            FROM ecm_core.case_documents cd
+            LEFT JOIN ecm_core.documents d ON d.id = cd.document_id::uuid
+            WHERE cd.id = ? AND cd.case_id = ?
+            """, (rs, rn) -> {
+                var row = new java.util.HashMap<String, Object>();
+                row.put("documentId", rs.getString("document_id"));
+                row.put("docName", rs.getString("doc_name"));
+                row.put("status", rs.getString("status"));
+                return row;
+            }, itemId, caseId);
+
+        if (items.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Checklist item not found");
+        }
+
+        String documentId = (String) items.get(0).get("documentId");
+        String docName = (String) items.get(0).get("docName");
+
+        if (documentId == null || documentId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "No document linked to this checklist item — upload a document first");
+        }
+
+        // Call ecm-eforms to create DocuSign envelope
+        try {
+            var body = new java.util.HashMap<String, Object>();
+            body.put("documentId", documentId);
+            body.put("recipientEmail", req.signerEmail());
+            body.put("recipientName", req.signerName());
+            body.put("subject", req.emailSubject() != null && !req.emailSubject().isBlank()
+                    ? req.emailSubject()
+                    : "ECM — Please sign: " + (docName != null ? docName : "Document"));
+            body.put("placement", req.placement() != null ? req.placement() : "lastPage");
+            if (req.signaturePage() != null) body.put("signaturePage", req.signaturePage());
+            if (req.signatureX() != null) body.put("signatureX", req.signatureX());
+            if (req.signatureY() != null) body.put("signatureY", req.signatureY());
+            body.put("requireInitials", req.requireInitials());
+            body.put("requireDateSigned", req.requireDateSigned());
+
+            org.springframework.web.client.RestTemplate rest = new org.springframework.web.client.RestTemplate();
+            String eformsUrl = "http://localhost:8084/api/eforms/docusign/create-envelope";
+
+            @SuppressWarnings("unchecked")
+            var response = rest.postForEntity(eformsUrl,
+                    new org.springframework.http.HttpEntity<>(body,
+                            new org.springframework.http.HttpHeaders() {{ setContentType(org.springframework.http.MediaType.APPLICATION_JSON); }}),
+                    java.util.Map.class);
+
+            String envelopeId = response.getBody() != null
+                    ? String.valueOf(response.getBody().get("envelopeId")) : "UNKNOWN";
+
+            // Update checklist item with DocuSign info
+            jdbc.update("""
+                UPDATE ecm_core.case_documents
+                SET status = 'PENDING_SIGNATURE', updated_at = NOW()
+                WHERE id = ? AND case_id = ?
+                """, itemId, caseId);
+
+            recordTimelineEvent(caseId, "DOCUSIGN_SENT",
+                    "Document sent for signature to " + req.signerEmail() +
+                    " (envelope: " + envelopeId + ")", null, sentBy);
+
+            log.info("DocuSign sent: caseId={}, itemId={}, envelopeId={}, signer={}",
+                    caseId, itemId, envelopeId, req.signerEmail());
+
+        } catch (Exception e) {
+            log.error("Failed to send for signature: caseId={}, itemId={}: {}",
+                    caseId, itemId, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to create DocuSign envelope: " + e.getMessage());
+        }
+
+        return getById(caseId);
+    }
+
     private OverrideRequestResponse getLatestOverrideRequest(UUID caseId, Integer itemId) {
         return jdbc.query("""
             SELECT id, case_id, checklist_item_id, item_name, reason, status,
@@ -1256,7 +1535,9 @@ public class CaseService {
         if (storedOtp == null || storedOtp.isBlank())
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No OTP generated. Request a code first.");
 
-        if (!otp.equals(storedOtp)) {
+        if (!java.security.MessageDigest.isEqual(
+                otp.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                storedOtp.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
             // Increment failed attempts
             jdbc.update("""
                 UPDATE ecm_core.external_participants

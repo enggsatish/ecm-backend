@@ -62,6 +62,28 @@ spring:
         jwt:
           issuer-uri: https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697
 
+  # ── Spring AI MCP Server ────────────────────────────────────────────
+  # Exposes ECM tools (13 read-only SELECT queries) to the AI Gateway via
+  # real MCP JSON-RPC 2.0 over HTTP+SSE transport. LangChain4j's HttpMcpTransport
+  # on the gateway side connects to /mcp/sse, receives an `endpoint` SSE event
+  # pointing at /mcp/message, and then exchanges JSON-RPC messages on that path.
+  #
+  # Legacy shape (McpServerController at /mcp/tools + /mcp/tools/{name}/execute)
+  # stays in place during the migration window for rollback safety. Both paths
+  # share business logic via McpToolService. See HANDOFF_ECM_JSON_RPC_MCP.md.
+  ai:
+    mcp:
+      server:
+        enabled: true
+        name: ecm-mcp
+        version: 1.0.0
+        type: SYNC
+        sse-endpoint: /mcp/sse
+        sse-message-endpoint: /mcp/message
+        instructions: >
+          Read-only ECM platform tools — search documents, customers, cases,
+          workflows, forms, and retrieve platform statistics.
+
 server:
   port: 8086
 
@@ -75,6 +97,8 @@ ecm:
     allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
   services:
     workflow-url: ${WORKFLOW_URL:http://localhost:8083}
+  external:
+    session-secret: ${EXTERNAL_SESSION_SECRET:ecm-dev-session-secret-32chars!!}
   internal:
     api-key: ${INTERNAL_API_KEY:ecm-internal-dev-key}
 

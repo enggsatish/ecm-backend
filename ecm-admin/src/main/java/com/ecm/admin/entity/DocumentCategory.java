@@ -29,6 +29,9 @@ public class DocumentCategory {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    @Column(name = "classification_keywords", columnDefinition = "text[]")
+    private String[] classificationKeywords;
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
@@ -54,6 +57,8 @@ public class DocumentCategory {
     public void setIsActive(Boolean isActive) { this.isActive = isActive; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+    public String[] getClassificationKeywords() { return classificationKeywords; }
+    public void setClassificationKeywords(String[] classificationKeywords) { this.classificationKeywords = classificationKeywords; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 }
