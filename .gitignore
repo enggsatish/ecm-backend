@@ -40,3 +40,6 @@ build/
 # Test credentials — never commit
 tests/api/test.env
 tests/api/test-results/
+
+# IntelliJ run configs — now carry real env var values (e.g. MASTER_ENCRYPT_KEY), never commit
+.run/
