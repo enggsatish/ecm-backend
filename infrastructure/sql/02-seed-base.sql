@@ -11,6 +11,27 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 0. AI Gateway shared database (ai-banking-poc connects here as 'dev'/'bankingpoc')
+--    See ai-banking-poc/docker-compose.yml — that repo has no postgres of its own,
+--    it expects this role + database to already exist on this shared instance.
+-- ─────────────────────────────────────────────────────────────────────────────
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'dev') THEN
+        EXECUTE 'CREATE USER dev WITH PASSWORD ''dev''';
+    END IF;
+END
+$$;
+
+SELECT 'CREATE DATABASE bankingpoc OWNER dev'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'bankingpoc')\gexec
+
+\c bankingpoc
+CREATE EXTENSION IF NOT EXISTS vector;
+GRANT ALL PRIVILEGES ON DATABASE bankingpoc TO dev;
+\c ecmdb
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Roles
 -- ─────────────────────────────────────────────────────────────────────────────
 INSERT INTO ecm_core.roles (name, description, is_system) VALUES
@@ -331,6 +352,14 @@ INSERT INTO ecm_core.role_permissions (role_id, permission_id, granted_by)
 SELECT r.id, p.id, 'system'
 FROM ecm_core.roles r, ecm_core.permissions p
 WHERE r.name = 'ECM_ADMIN';
+
+-- ECM_SUPER_ADMIN gets ALL permissions too — highest-privilege role, must be
+-- a superset of ECM_ADMIN. (Previously missing entirely — a fresh install's
+-- bootstrapped super admin had zero permissions until granted by hand.)
+INSERT INTO ecm_core.role_permissions (role_id, permission_id, granted_by)
+SELECT r.id, p.id, 'system'
+FROM ecm_core.roles r, ecm_core.permissions p
+WHERE r.name = 'ECM_SUPER_ADMIN';
 
 -- ECM_BACKOFFICE
 INSERT INTO ecm_core.role_permissions (role_id, permission_id, granted_by)
