@@ -1,0 +1,118 @@
+spring:
+  application:
+    name: ecm-batch
+
+  # ── Database ────────────────────────────────────────────────────────────────
+  datasource:
+    url:                  jdbc:postgresql://localhost:5432/ecmdb
+    username:             ecmuser
+    password:             ecmpassword
+    driver-class-name:    org.postgresql.Driver
+    hikari:
+      pool-name:          BatchServicePool
+      maximum-pool-size:  10
+      minimum-idle:       2
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema:   ecm_batch
+        dialect:          org.hibernate.dialect.PostgreSQLDialect
+        # Allow cross-schema entity validation (WatchFolderConfig is in ecm_admin)
+        hbm2ddl.extra_physical_namespaces: ecm_admin
+    show-sql:             false
+    open-in-view:         false
+
+  # ── Flyway ──────────────────────────────────────────────────────────────────
+  flyway:
+    enabled:              true
+    schemas:              ecm_batch
+    baseline-on-migrate:  true
+    baseline-version:     1
+    locations:            classpath:db/migration
+    out-of-order:         true
+    ignore-migration-patterns: "*:missing"
+
+  # ── RabbitMQ ────────────────────────────────────────────────────────────────
+  rabbitmq:
+    host:           localhost
+    port:           5672
+    username:       ecmrabbit
+    password:       ecmrabbitpassword
+    virtual-host:   ecm
+
+  # ── File upload limits ───────────────────────────────────────────────────────
+  servlet:
+    multipart:
+      max-file-size:      50MB
+      max-request-size:   200MB
+
+  # ── OAuth2 resource server ───────────────────────────────────────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://integrator-3023444.okta.com/oauth2/ausykohz3k9z4e9Wy697
+
+# ── Server ───────────────────────────────────────────────────────────────────
+server:
+  port: 8089
+
+# ── Okta audience ────────────────────────────────────────────────────────────
+okta:
+  oauth2:
+    audience: api://sso-default
+
+# ── Custom ECM config ────────────────────────────────────────────────────────
+ecm:
+  minio:
+    endpoint:   ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:ecmminioadmin}
+    secret-key: ${MINIO_SECRET_KEY:ecmminio@password123}
+  storage:
+    bucket:     ${MINIO_BUCKET:ecm-documents}
+
+  services:
+    document-url: ${ECM_DOCUMENT_URL:http://localhost:8082}
+    admin-url:    ${ECM_ADMIN_URL:http://localhost:8086}
+    eforms-url:   ${ECM_EFORMS_URL:http://localhost:8084}
+
+  security:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200,http://localhost:3000}
+
+  batch:
+    confidence-threshold: 90.0
+    # Watch folder config is now DB-driven (ecm_admin.watch_folder_config)
+    # Configure via Admin > Batch Settings in the UI
+
+# ── Actuator ────────────────────────────────────────────────────────────────
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.ecm.batch: DEBUG
+    org.springframework.security: INFO
+    io.minio: WARN
+    org.flywaydb: INFO
