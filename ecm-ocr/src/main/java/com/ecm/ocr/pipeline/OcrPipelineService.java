@@ -290,6 +290,41 @@ public class OcrPipelineService {
                 }
             }
 
+            // 8c. Azure ran with the generic fallback model (category was unknown at the time)
+            // and produced no fields. Now that keyword classification knows the real category,
+            // re-run Azure once with the category-specific model to get structured fields.
+            // Azure itself never sets detectedCategory (it doesn't classify) — this category
+            // always comes from the keyword classifier in step 8b, so this only fires once.
+            if ("azure".equals(acceptedEngine) && bestResult.fields().isEmpty()
+                    && bestResult.detectedCategory() != null) {
+                OcrEnginePlugin azurePluginRaw = engineRegistry.get("azure");
+                if (azurePluginRaw instanceof AzureOcrPlugin azurePlugin
+                        && azurePlugin.hasSpecificModel(bestResult.detectedCategory())) {
+                    EngineContext reRunCtx = new EngineContext(bestResult.detectedCategory(),
+                            ctx.categoryId(), ctx.previousText(), ctx.previousFields(),
+                            ctx.fewShotExamples(), ctx.documentId(), ctx.documentName(),
+                            ctx.engineConfig());
+                    OcrEngineResult reRunResult = processWithEngine(azurePlugin, pageImages, bytes,
+                            msg.contentType(), reRunCtx, steps);
+                    if (reRunResult != null && !reRunResult.fields().isEmpty()) {
+                        int fieldCount = (int) reRunResult.fields().entrySet().stream()
+                                .filter(e -> !e.getKey().startsWith("_")).count();
+                        log.info("Azure re-run with category-specific model: category={}, fields={}, docId={}",
+                                bestResult.detectedCategory(), fieldCount, msg.documentId());
+                        bestResult = new OcrEngineResult(
+                                reRunResult.text() != null && !reRunResult.text().isBlank()
+                                        ? reRunResult.text() : bestResult.text(),
+                                reRunResult.fields(), bestResult.detectedCategory(), bestResult.confidence(),
+                                reRunResult.regions(), bestResult.engineId(), reRunResult.modelUsed());
+                        steps.add(PipelineStep.done("FIELDS", "ocr", "Fields Extracted",
+                                fieldCount + " fields (azure re-run, " + bestResult.detectedCategory() + ")"));
+                    } else {
+                        log.debug("Azure re-run with category-specific model returned no fields, docId={}",
+                                msg.documentId());
+                    }
+                }
+            }
+
             // 9. Save Azure results as training examples for GLM-OCR
             if ("azure".equals(acceptedEngine) && bestResult.detectedCategory() != null) {
                 trainingService.saveExample(bestResult.detectedCategory(), bestResult, bytes, "AZURE");
