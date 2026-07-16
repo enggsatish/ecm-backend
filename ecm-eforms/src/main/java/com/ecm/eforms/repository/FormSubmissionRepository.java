@@ -41,4 +41,14 @@ public interface FormSubmissionRepository extends JpaRepository<FormSubmission, 
         @Param("tenantId") String tenantId,
         @Param("formKey")  String formKey,
         @Param("status")   String status);
+
+    /**
+     * Fetches the linked FormDefinition's documentCategoryId directly, without
+     * navigating the lazy FormSubmission.formDefinition association — needed by
+     * webhook processing, which runs outside any active Hibernate session by the
+     * time this value is needed.
+     */
+    @Query("SELECT fd.documentCategoryId FROM FormSubmission s JOIN s.formDefinition fd " +
+           "WHERE s.id = :submissionId")
+    Optional<Integer> findDocumentCategoryId(@Param("submissionId") UUID submissionId);
 }

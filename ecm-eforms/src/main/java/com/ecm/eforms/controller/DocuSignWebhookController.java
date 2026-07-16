@@ -164,8 +164,7 @@ public class DocuSignWebhookController {
                     existingDocId = documentPromotionClient.promote(
                             signedPdf, filename, displayName,
                             sub.getSubmittedBy(), sub.getPartyExternalId(),
-                            sub.getFormDefinition() != null
-                                    ? sub.getFormDefinition().getDocumentCategoryId() : null);
+                            submissionRepo.findDocumentCategoryId(sub.getId()).orElse(null));
                     log.info("[DocuSign] Promoted signed PDF as new document: {}", existingDocId);
                 }
             } else {
