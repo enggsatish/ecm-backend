@@ -33,11 +33,6 @@ public class AzureOcrPlugin implements OcrEnginePlugin {
     @Override
     public String engineId() { return "azure"; }
 
-    /** Whether Azure has a field-extraction-capable model for this category. */
-    public boolean hasSpecificModel(String categoryCode) {
-        return azureEngine.hasSpecificModel(categoryCode);
-    }
-
     @Override
     public String displayName() { return "Azure AI Document Intelligence"; }
 

@@ -128,6 +128,7 @@ public class OllamaClient {
                     "model", model,
                     "prompt", prompt,
                     "stream", false,
+                    "format", "json",
                     "options", Map.of(
                             "temperature", 0.0,
                             "num_predict", 4096,

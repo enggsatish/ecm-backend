@@ -238,14 +238,6 @@ public class AzureDocumentAiEngine {
         return "prebuilt-read"; // fallback: general OCR
     }
 
-    /**
-     * Whether this category has a field-extraction-capable prebuilt model,
-     * as opposed to falling back to generic text-only OCR.
-     */
-    public boolean hasSpecificModel(String categoryCode) {
-        return categoryCode != null && MODEL_MAP.containsKey(categoryCode.toUpperCase());
-    }
-
     /** Converts camelCase field names to snake_case (Azure uses camelCase). */
     private String camelToSnake(String name) {
         return name.replaceAll("([a-z])([A-Z])", "$1_$2").toLowerCase();
