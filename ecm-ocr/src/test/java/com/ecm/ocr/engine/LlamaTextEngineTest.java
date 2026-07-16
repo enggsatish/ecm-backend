@@ -167,5 +167,36 @@ class LlamaTextEngineTest {
                     ctx("Some document text here that is long enough"));
             assertThat(result.text()).isEmpty(); // empty, not crash
         }
+
+        @Test
+        @DisplayName("Repairs a truncated JSON response and recovers the fields completed before the cutoff")
+        void repairsTruncatedResponse() {
+            // Exact response captured from a real qwen2.5:7b/llama3.2:3b run on a bank
+            // statement — Ollama's format=json didn't stop the model from cutting off
+            // mid-object after "closing_balance":1, with no closing braces at all.
+            String truncatedResponse = "{\"fields\":{\"account_number\":\"00005-123-456-7\","
+                    + "\"account_holder\":\"JOHN JONES 1643 DUNDAS ST W APT 27 TORONTO ON M6K 1V2\","
+                    + "\"statement_date\":\"2003-10-09 to 2003-11-08\","
+                    + "\"opening_balance\":0.55,\"closing_balance\":1,";
+
+            given(ollamaClient.generateText(anyString(), anyString(), anyString(), anyInt()))
+                    .willReturn(truncatedResponse);
+
+            EngineContext financialCtx = EngineContext.initial(UUID.randomUUID(), "statement.png", "FINANCIAL", 4)
+                    .withEngineConfig(Map.of("url", "http://localhost:11434", "model", "qwen2.5:7b", "timeout", "60"))
+                    .withPreviousResult(OcrEngineResult.textOnly(
+                            "FIRST BANK OF WIKI CHEQUING ACCOUNT STATEMENT JOHN JONES", "azure"));
+
+            OcrEngineResult result = engine.process(null, null, financialCtx);
+
+            // Every field completed before the truncation point is recovered —
+            // this is the whole point: previously this returned completely empty.
+            assertThat(result.fields()).containsEntry("account_number", "00005-123-456-7");
+            assertThat(result.fields()).containsEntry("account_holder",
+                    "JOHN JONES 1643 DUNDAS ST W APT 27 TORONTO ON M6K 1V2");
+            assertThat(result.fields()).containsEntry("statement_date", "2003-10-09 to 2003-11-08");
+            assertThat(result.fields()).containsKey("opening_balance");
+            assertThat(result.fields()).containsKey("closing_balance"); // present, though its value may be partial
+        }
     }
 }

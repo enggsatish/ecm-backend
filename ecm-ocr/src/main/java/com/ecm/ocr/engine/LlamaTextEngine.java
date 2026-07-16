@@ -159,7 +159,20 @@ public class LlamaTextEngine implements OcrEnginePlugin {
                 return OcrEngineResult.empty(engineId());
             }
 
-            JsonNode root = objectMapper.readTree(json);
+            JsonNode root;
+            try {
+                root = objectMapper.readTree(json);
+            } catch (Exception parseEx) {
+                // LLM output got truncated mid-object — Ollama's format=json constrains
+                // token-level syntax but doesn't guarantee the model finishes before a
+                // stop token fires. Repair by closing any open string and balancing
+                // brackets/braces, then retry once. The field mid-generation at the
+                // truncation point may come back partial/wrong, but every field
+                // completed before that point is recovered instead of losing all of them.
+                log.debug("Llama-text: strict JSON parse failed, attempting truncation repair for docId={}",
+                        ctx.documentId());
+                root = objectMapper.readTree(repairTruncatedJson(json));
+            }
 
             // Category
             String category = root.has("category") ? root.path("category").asText(null) : null;
@@ -237,5 +250,53 @@ public class LlamaTextEngine implements OcrEnginePlugin {
             return trimmed.substring(firstBrace, lastBrace + 1);
         }
         return null;
+    }
+
+    /**
+     * Repairs JSON truncated mid-object. Closes any open string, strips a
+     * dangling trailing comma, and appends the closing brackets/braces needed
+     * to balance what's open. Only ever invoked after strict parsing has
+     * already failed, so it can't change behavior for well-formed responses.
+     */
+    private String repairTruncatedJson(String json) {
+        int braceDepth = 0;
+        int bracketDepth = 0;
+        boolean inString = false;
+        boolean escape = false;
+
+        for (char c : json.toCharArray()) {
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (c == '\\' && inString) {
+                escape = true;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) continue;
+
+            if (c == '{') braceDepth++;
+            else if (c == '}') braceDepth--;
+            else if (c == '[') bracketDepth++;
+            else if (c == ']') bracketDepth--;
+        }
+
+        StringBuilder repaired = new StringBuilder(json.strip());
+        if (inString) repaired.append('"');
+        while (repaired.length() > 0) {
+            char last = repaired.charAt(repaired.length() - 1);
+            if (Character.isWhitespace(last) || last == ',') {
+                repaired.deleteCharAt(repaired.length() - 1);
+            } else {
+                break;
+            }
+        }
+        repaired.append("]".repeat(Math.max(0, bracketDepth)));
+        repaired.append("}".repeat(Math.max(0, braceDepth)));
+        return repaired.toString();
     }
 }
