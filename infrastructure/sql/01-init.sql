@@ -276,7 +276,7 @@ CREATE TABLE ecm_core.documents (
     created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     -- Constraints
-    CONSTRAINT ck_classification_source CHECK (classification_source IS NULL OR classification_source IN ('MANUAL', 'AUTO_CLASSIFIED', 'AUTO_CLASSIFIED_VERIFIED', 'MANUAL_VERIFIED', 'QR_CODE', 'MIGRATION', 'BATCH', 'VERIFIED')),
+    CONSTRAINT ck_classification_source CHECK (classification_source IS NULL OR classification_source IN ('MANUAL', 'AUTO_CLASSIFIED', 'AUTO_CLASSIFIED_VERIFIED', 'MANUAL_VERIFIED', 'QR_CODE', 'MIGRATION', 'BATCH', 'VERIFIED', 'EFORM')),
     CONSTRAINT ck_lock_type CHECK (lock_type IS NULL OR lock_type IN ('USER', 'CASE', 'BATCH'))
 );
 CREATE INDEX idx_core_docs_dept         ON ecm_core.documents(department_id);
