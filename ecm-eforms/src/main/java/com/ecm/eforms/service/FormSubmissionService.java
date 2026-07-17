@@ -273,7 +273,7 @@ public class FormSubmissionService {
 
     @Transactional(readOnly = true)
     public FormSubmission getById(UUID id) {
-        return submissionRepo.findById(id)
+        return submissionRepo.findByIdWithFormDefinition(id)
                 .orElseThrow(() -> new IllegalArgumentException("Submission not found: " + id));
     }
 

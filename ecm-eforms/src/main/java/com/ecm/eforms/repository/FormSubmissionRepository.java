@@ -18,6 +18,14 @@ public interface FormSubmissionRepository extends JpaRepository<FormSubmission, 
     /** Webhook lookup — find submission by DocuSign envelope ID */
     Optional<FormSubmission> findByDocuSignEnvelopeId(String envelopeId);
 
+    /**
+     * Fetches a submission with its FormDefinition eagerly joined, so callers that
+     * map to a DTO after the transactional service method returns (e.g. controllers)
+     * don't hit LazyInitializationException on the closed-session formDefinition proxy.
+     */
+    @Query("SELECT s FROM FormSubmission s LEFT JOIN FETCH s.formDefinition WHERE s.id = :id")
+    Optional<FormSubmission> findByIdWithFormDefinition(@Param("id") UUID id);
+
     /** User's own submissions — newest first */
     Page<FormSubmission> findByTenantIdAndSubmittedByOrderByCreatedAtDesc(
         String tenantId, String submittedBy, Pageable pageable);
