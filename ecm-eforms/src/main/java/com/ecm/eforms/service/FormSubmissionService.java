@@ -261,7 +261,8 @@ public class FormSubmissionService {
                 pdfBytes, submission.getFormKey() + "-" + submission.getId() + ".pdf", submission.getFormKey(),
                 submission.getSubmittedBy(),
                 submission.getPartyExternalId(),   // ← bug fix: was not passed before
-                null);
+                null,
+                true);   // eformGenerated — system-generated PDF, fields already known
 
         log.info("[DEV MODE] Document Promoted: id={}, name={}, party={}",
                 documentId, docName, submission.getPartyExternalId());
@@ -318,7 +319,8 @@ public class FormSubmissionService {
 
         UUID docId = documentPromotionClient.promote(
                 fileBytes, filename, sub.getFormKey(),
-                sub.getSubmittedBy(), sub.getPartyExternalId(), null);
+                sub.getSubmittedBy(), sub.getPartyExternalId(), null,
+                false);   // manually scanned walk-in copy — real content, needs full OCR
 
         sub.markSigned(docId);
 

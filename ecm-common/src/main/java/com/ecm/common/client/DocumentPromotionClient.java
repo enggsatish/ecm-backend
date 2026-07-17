@@ -55,10 +55,16 @@ public class DocumentPromotionClient {
      * @param submittedByEmail used as uploadedByEmail on the document
      * @param partyExternalId  soft ref to party (null → triggers backoffice triage queue)
      * @param categoryId       document category (may be null)
+     * @param eformGenerated   true when pdfBytes is a system-generated rendering of a
+     *                         FormSubmission's already-known field data (category/fields
+     *                         are ground truth, not something OCR needs to figure out).
+     *                         false for a real file of unknown content (batch scans,
+     *                         external portal uploads) — those still need full OCR.
      * @return UUID of the created document, or null on failure (caller logs + handles)
      */
     public UUID promote(byte[] pdfBytes, String filename, String displayName,
-                        String submittedByEmail, String partyExternalId, Integer categoryId) {
+                        String submittedByEmail, String partyExternalId, Integer categoryId,
+                        boolean eformGenerated) {
         try {
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
 
@@ -75,7 +81,7 @@ public class DocumentPromotionClient {
             body.add("files", new HttpEntity<>(fileResource, fileHeaders));
 
             // Metadata part — JSON string matching DocumentUploadRequest record fields
-            String metadata = buildMetadataJson(displayName, partyExternalId, categoryId);
+            String metadata = buildMetadataJson(displayName, partyExternalId, categoryId, eformGenerated);
             HttpHeaders metaHeaders = new HttpHeaders();
             metaHeaders.setContentType(MediaType.APPLICATION_JSON);
             body.add("metadata", new HttpEntity<>(metadata, metaHeaders));
@@ -112,7 +118,8 @@ public class DocumentPromotionClient {
         }
     }
 
-    private String buildMetadataJson(String name, String partyExternalId, Integer categoryId) {
+    private String buildMetadataJson(String name, String partyExternalId, Integer categoryId,
+                                      boolean eformGenerated) {
         StringBuilder sb = new StringBuilder("{");
         sb.append("\"name\":\"").append(escape(name)).append("\"");
         if (partyExternalId != null && !partyExternalId.isBlank()) {
@@ -120,6 +127,9 @@ public class DocumentPromotionClient {
         }
         if (categoryId != null) {
             sb.append(",\"categoryId\":").append(categoryId);
+        }
+        if (eformGenerated) {
+            sb.append(",\"eformGenerated\":true");
         }
         sb.append("}");
         return sb.toString();

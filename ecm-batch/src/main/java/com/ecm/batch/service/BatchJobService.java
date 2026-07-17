@@ -67,7 +67,8 @@ public class BatchJobService {
                 // 1. Promote file to ecm-document (MinIO upload + Document record + OCR trigger)
                 UUID documentId = promotionClient.promote(
                         file.getBytes(), filename, displayName,
-                        createdBy, null, null   // no party, no category — auto-classify later
+                        createdBy, null, null,  // no party, no category — auto-classify later
+                        false   // real scanned file — needs full OCR/classification
                 );
 
                 if (documentId == null) {

@@ -1719,7 +1719,8 @@ public class CaseService {
             byte[] fileBytes = file.getBytes();
             String displayName = "External: " + filename + " (by " + participantName + ")";
             documentId = documentPromotionClient.promote(
-                    fileBytes, filename, displayName, participantName, partyExternalId, null);
+                    fileBytes, filename, displayName, participantName, partyExternalId, null,
+                    false);  // real external-portal upload — needs full OCR/classification
         } catch (Exception e) {
             log.error("Failed to store external upload: {}", e.getMessage());
         }

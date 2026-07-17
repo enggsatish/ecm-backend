@@ -39,5 +39,13 @@ public record DocumentUploadRequest(
         @Size(max = 100) String partyExternalId,  // soft ref → ecm_core.parties.external_id
 
         // ── Workflow control ─────────────────────────────────────────────────
-        Boolean skipWorkflow  // true = case checklist uploads; skips standalone workflow trigger
+        Boolean skipWorkflow,  // true = case checklist uploads; skips standalone workflow trigger
+
+        // ── eForm promotion ────────────────────────────────────────────────
+        // true = this file is a system-generated PDF rendered from a FormSubmission's
+        // already-known field data (DocumentPromotionClient), NOT a scanned/uploaded
+        // file of unknown content. Lets the OCR pipeline skip classification/extraction
+        // and go straight to a lighter customer-match-only step. Absent/false for every
+        // other upload path (regular upload, batch scan, external portal upload).
+        Boolean eformGenerated
 ) {}

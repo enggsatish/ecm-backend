@@ -99,7 +99,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .uploadedBy(uploadedByUserId)
                 .uploadedByEmail(uploadedByEmail)
                 .status(DocumentStatus.PENDING_OCR)
-                .classificationSource(metadata != null && metadata.categoryId() != null ? "MANUAL" : null)
+                .classificationSource(resolveInitialClassificationSource(metadata))
                 .metadata(metadata != null ? metadata.metadata() : null)
                 .tags(metadata != null ? metadata.tags() : null)
                 .segmentId(metadata != null ? metadata.segmentId() : null)
@@ -570,12 +570,25 @@ public class DocumentServiceImpl implements DocumentService {
         return (ct != null && !ct.isBlank()) ? ct : "application/octet-stream";
     }
 
+    /**
+     * "EFORM" marks documents promoted from a FormSubmission (DocumentPromotionClient) —
+     * category and field values are already known from the submission, unlike a real
+     * upload of unknown content. publishOcrEvent() reads this back to tell the OCR
+     * pipeline to skip classification/extraction for these documents.
+     */
+    private String resolveInitialClassificationSource(DocumentUploadRequest metadata) {
+        if (metadata == null) return null;
+        if (Boolean.TRUE.equals(metadata.eformGenerated())) return "EFORM";
+        return metadata.categoryId() != null ? "MANUAL" : null;
+    }
+
     private void publishOcrEvent(Document doc) {
         try {
             OcrRequestEvent event = new OcrRequestEvent(
                     doc.getId(), doc.getStorageBucket(), doc.getStorageKey(),
                     doc.getMimeType(), String.valueOf(doc.getUploadedBy()),
-                    doc.getCategoryId(), doc.getName()
+                    doc.getCategoryId(), doc.getName(),
+                    doc.getPartyExternalId(), "EFORM".equals(doc.getClassificationSource())
             );
             rabbitTemplate.convertAndSend(
                     RabbitMqConfig.EXCHANGE, RabbitMqConfig.OCR_ROUTING_KEY, event);

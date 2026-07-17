@@ -115,6 +115,23 @@ public class OcrPipelineService {
                 msg.documentId(), msg.storageKey(), msg.contentType());
         long start = System.currentTimeMillis();
 
+        // eForm-generated documents already have category + field values from the
+        // FormSubmission — skip OCR/classification entirely and go straight to a
+        // lighter customer-match-only step. Falls through to the normal pipeline
+        // below if categoryId is missing (form has no documentCategoryId configured),
+        // as a defensive fallback so the document still gets classified somehow.
+        if (Boolean.TRUE.equals(msg.eformGenerated()) && msg.categoryId() != null) {
+            try {
+                processEformGenerated(msg, start);
+            } catch (Exception e) {
+                log.error("eForm-generated OCR skip-path failed: documentId={}, error={}",
+                        msg.documentId(), e.getMessage(), e);
+                writeback.writeFailed(msg.documentId());
+                throw e instanceof RuntimeException re ? re : new RuntimeException(e);
+            }
+            return;
+        }
+
         try {
             // 1. Fetch bytes from MinIO
             byte[] bytes = minioFetch.fetchBytes(msg.storageBucket(), msg.storageKey());
@@ -634,6 +651,87 @@ public class OcrPipelineService {
 
         String targetStatus = resolveTargetStatus(categoryId, confidence, partyExternalId, manualUpload);
 
+        writeAndPublishWithStatus(msg, text, fields, categoryId, classificationSource,
+                confidence, partyExternalId, targetStatus, steps, startTime);
+    }
+
+    /**
+     * Skips the full engine pipeline for a document promoted from a FormSubmission —
+     * category and field values are already ground truth (written synchronously by
+     * ecm-eforms before this message was even published). Only customer matching may
+     * still be needed, and only when no party was already linked at fill time.
+     *
+     * <p>Unlike {@link #resolveTargetStatus}'s "manualUpload → always ACTIVE" shortcut
+     * (which assumes a human provided full context), an eform submission may have been
+     * filled without selecting a customer — so status here is computed explicitly from
+     * whether a party ended up linked, matching the same NEEDS_ASSIGNMENT fallback a
+     * real unlinked upload would get.
+     */
+    private void processEformGenerated(OcrRequestMessage msg, long startTime) {
+        var steps = new PipelineStep.Builder();
+        steps.add(PipelineStep.skipped("OCR", "ocr", "Skipped",
+                "form-generated PDF — field values already known from submission"));
+        steps.add(PipelineStep.done("CLASSIFY", "classify", "Known",
+                "category from form definition"));
+
+        Map<String, Object> existingFields = fetchExtractedFields(msg.documentId());
+
+        String partyExternalId = msg.partyExternalId();
+        if (partyExternalId == null || partyExternalId.isBlank()) {
+            Map<String, String> fieldsAsStrings = new HashMap<>();
+            existingFields.forEach((k, v) -> { if (v != null) fieldsAsStrings.put(k, v.toString()); });
+            try {
+                CustomerMatchResult custResult = customerMatcher.match(null, fieldsAsStrings);
+                if (custResult != null && custResult.externalId() != null) {
+                    partyExternalId = custResult.externalId();
+                    log.info("Customer matched for eform-generated documentId={}: {} confidence={}%, externalId={}",
+                            msg.documentId(), custResult.matchedField(), custResult.confidence(), partyExternalId);
+                    steps.add(PipelineStep.done("CUSTOMER", "classify", "Customer Matched",
+                            custResult.matchedField() + " (" + custResult.confidence() + "%)"));
+                } else {
+                    steps.add(PipelineStep.skipped("CUSTOMER", "classify", "No Match",
+                            "no customer selected at fill time"));
+                }
+            } catch (Exception e) {
+                log.warn("Customer matching failed for eform-generated documentId={}: {}",
+                        msg.documentId(), e.getMessage());
+                steps.add(PipelineStep.failed("CUSTOMER", "classify", "Match Failed", e.getMessage()));
+            }
+        } else {
+            steps.add(PipelineStep.done("CUSTOMER", "classify", "Customer Linked",
+                    "selected at form fill time"));
+        }
+
+        boolean customerLinked = partyExternalId != null && !partyExternalId.isBlank();
+        String targetStatus = customerLinked ? "ACTIVE" : "NEEDS_ASSIGNMENT";
+
+        // fields=existingFields re-writes the same submission data that's already there
+        // (harmless no-op via COALESCE) so indexing/RAG push below see real content
+        // instead of nulls. text stays null — eform PDFs have no OCR text to extract.
+        writeAndPublishWithStatus(msg, null, existingFields, msg.categoryId(), "EFORM",
+                null, partyExternalId, targetStatus, steps.build(), startTime);
+    }
+
+    /** Reads the current extracted_fields for a document (already written by ecm-eforms). */
+    private Map<String, Object> fetchExtractedFields(UUID documentId) {
+        try {
+            String json = jdbc.queryForObject(
+                    "SELECT extracted_fields::text FROM ecm_core.documents WHERE id = ?",
+                    String.class, documentId);
+            if (json == null || json.isBlank()) return Map.of();
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(json, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to fetch existing extracted_fields for eform documentId={}: {}",
+                    documentId, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private void writeAndPublishWithStatus(OcrRequestMessage msg, String text, Map<String, Object> fields,
+                                            Integer categoryId, String classificationSource,
+                                            BigDecimal confidence, String partyExternalId,
+                                            String targetStatus, List<PipelineStep> steps, long startTime) {
         // Write back to DB
         if (categoryId != null || partyExternalId != null) {
             writeback.writeSuccessWithClassification(msg.documentId(), text, fields,

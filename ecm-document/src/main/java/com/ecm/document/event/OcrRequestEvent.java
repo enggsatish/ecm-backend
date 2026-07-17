@@ -18,5 +18,7 @@ public record OcrRequestEvent(
         String contentType,
         String uploadedBy,
         Integer categoryId,   // ← ADD THIS
-        String documentName   // ← ADD THIS
+        String documentName,  // ← ADD THIS
+        String partyExternalId,   // already known at upload time (e.g. eform fill-time selection)
+        Boolean eformGenerated    // true = system-generated PDF, category/fields already known
 ) {}

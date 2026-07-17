@@ -93,7 +93,8 @@ public class FormDocumentCreationService {
                     submission.getPartyExternalId(),     // soft ref → party
                     submission.getFormDefinition() != null
                             ? submission.getFormDefinition().getDocumentCategoryId()
-                            : null
+                            : null,
+                    true   // eformGenerated — category/fields already known from the submission
             );
 
             if (documentId != null) {
