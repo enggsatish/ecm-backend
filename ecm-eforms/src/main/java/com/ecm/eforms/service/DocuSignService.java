@@ -79,9 +79,17 @@ public class DocuSignService {
             byte[] keyBytes = Base64.getDecoder().decode(masterKeyBase64);
             masterKey = new SecretKeySpec(keyBytes, AES_ALGO);
             log.info("[DocuSign] Using configured master encryption key");
-        } else {
-            log.warn("[DocuSign] No master-encrypt-key configured — " +
-                    "secrets decryption will fail if ecm-admin encrypted them");
+            return;
+        }
+        try {
+            byte[] keyBytes = Base64.getDecoder().decode(com.ecm.common.util.EncryptionUtil.resolveMasterKeyBase64());
+            masterKey = new SecretKeySpec(keyBytes, AES_ALGO);
+            log.warn("[DocuSign] ecm.master-encrypt-key not set — using a key persisted at {} (shared with " +
+                    "ecm-admin) so secrets survive restarts. Set ecm.master-encrypt-key explicitly for any " +
+                    "shared/production deployment.", com.ecm.common.util.EncryptionUtil.devKeyFilePath());
+        } catch (Exception e) {
+            log.error("[DocuSign] Failed to resolve a persisted dev key ({}) — secrets decryption will fail " +
+                    "until ecm.master-encrypt-key is set.", e.getMessage());
         }
     }
 

@@ -62,6 +62,13 @@ public class CaseController {
         return ResponseEntity.ok(ApiResponse.ok(caseService.getById(id)));
     }
 
+    /** Checklist grouped by document category — used by Customer 360's per-case view. */
+    @GetMapping("/{id}/checklist/grouped")
+    @PreAuthorize("hasPermission(null, 'CASE:VIEW')")
+    public ResponseEntity<ApiResponse<List<CategoryGroup>>> getChecklistGrouped(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(caseService.getChecklistGroupedByCategory(id)));
+    }
+
     @PostMapping
     @PreAuthorize("hasPermission(null, 'CASE:CREATE')")
     public ResponseEntity<ApiResponse<CaseResponse>> create(

@@ -48,6 +48,17 @@ public class FormField {
     private Map<String, Object> lookupConfig;
 
     /**
+     * Auto-populate from the customer's canonical profile (CRM-aware form fill,
+     * design note "CRM-Aware Form Fill & Customer 360", 2026-07-17). References
+     * a customer_profile_attributes.key (ecm-admin) — resolved and merged into
+     * FormFillPage's prefill data at fill time, but the field itself stays
+     * editable. Null = not bound to any customer attribute (default, unchanged
+     * behavior). v1 only supports flat profile attributes, not relationship
+     * (membership/account) attributes — see design note for why.
+     */
+    private String customerAttributeKey;
+
+    /**
      * Default value pre-populated when the form loads.
      *
      * Type is JsonNode instead of Object to avoid Jackson stream re-entrancy

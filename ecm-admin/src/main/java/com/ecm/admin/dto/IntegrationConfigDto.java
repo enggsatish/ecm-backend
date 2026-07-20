@@ -60,6 +60,29 @@ public class IntegrationConfigDto {
             String message
     ) {}
 
+    /** Response: full Salesforce config (secret masked) */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record SalesforceConfigResponse(
+            boolean enabled,
+            String loginUrl,
+            String clientId,
+            String contactLookupField,
+            // secret presence indicator — "*** saved ***" if set, else null
+            String clientSecret,
+            String testStatus,
+            OffsetDateTime testedAt
+    ) {}
+
+    /** Request: update Salesforce config */
+    public record SalesforceConfigRequest(
+            boolean enabled,
+            String loginUrl,
+            String clientId,
+            String contactLookupField,
+            /** null or "*** saved ***" → keep existing; any other value → encrypt and store */
+            String clientSecret
+    ) {}
+
     public static String masked(Object value) {
         return (value != null && !String.valueOf(value).isBlank()) ? MASKED : null;
     }

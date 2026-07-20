@@ -61,6 +61,13 @@ public class CaseDto {
             OffsetDateTime verifiedAt
     ) {}
 
+    /** Checklist items grouped by document category — for Customer 360's per-case view. */
+    public record CategoryGroup(
+            Integer categoryId,     // null group = uncategorized
+            String categoryName,
+            List<ChecklistItem> items
+    ) {}
+
     // ── Request DTOs ──────────────────────────────────────────────────────────
 
     public record CreateCaseRequest(

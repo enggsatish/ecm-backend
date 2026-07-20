@@ -4,6 +4,7 @@ import com.ecm.admin.dto.IntegrationConfigDto;
 import com.ecm.admin.dto.IntegrationConfigDto.*;
 import com.ecm.admin.entity.IntegrationConfig;
 import com.ecm.admin.repository.IntegrationConfigRepository;
+import com.ecm.common.util.EncryptionUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,9 +29,12 @@ import java.util.Map;
  * MASTER_ENCRYPT_KEY env var must be a 32-byte (256-bit) base64-encoded AES key.
  * Generate one with: openssl rand -base64 32
  *
- * If the env var is absent (dev mode), a random ephemeral key is used —
- * secrets stored in one run cannot be decrypted after restart.
- * Always set MASTER_ENCRYPT_KEY in production.
+ * If the env var is absent (dev mode), the key is resolved via
+ * {@link EncryptionUtil#resolveMasterKeyBase64()} — a key persisted at
+ * {@link EncryptionUtil#devKeyFilePath()}, shared with ecm-eforms (which
+ * decrypts secrets this service encrypts, as a separate process), so local
+ * restarts no longer invalidate every saved secret. Always set
+ * MASTER_ENCRYPT_KEY explicitly in any shared/production deployment.
  */
 @Slf4j
 @Service
@@ -38,7 +42,8 @@ import java.util.Map;
 @Transactional
 public class IntegrationConfigService {
 
-    private static final String SYSTEM_DOCUSIGN = "DOCUSIGN";
+    private static final String SYSTEM_DOCUSIGN   = "DOCUSIGN";
+    private static final String SYSTEM_SALESFORCE = "SALESFORCE";
     private static final String AES_ALGO        = "AES";
     private static final String AES_GCM_ALGO    = "AES/GCM/NoPadding";
     private static final int    GCM_IV_BYTES    = 12;
@@ -57,15 +62,23 @@ public class IntegrationConfigService {
             byte[] keyBytes = Base64.getDecoder().decode(masterKeyBase64);
             masterKey = new SecretKeySpec(keyBytes, AES_ALGO);
             log.info("[IntegrationConfig] Using configured MASTER_ENCRYPT_KEY");
-        } else {
+            return;
+        }
+        try {
+            byte[] keyBytes = Base64.getDecoder().decode(EncryptionUtil.resolveMasterKeyBase64());
+            masterKey = new SecretKeySpec(keyBytes, AES_ALGO);
+            log.warn("[IntegrationConfig] MASTER_ENCRYPT_KEY not set — using a key persisted at {} " +
+                    "(shared with ecm-eforms) so secrets survive restarts. Set ecm.master-encrypt-key " +
+                    "explicitly for any shared/production deployment.", EncryptionUtil.devKeyFilePath());
+        } catch (Exception e) {
+            log.error("[IntegrationConfig] Failed to resolve a persisted dev key ({}) — falling back to a " +
+                    "purely in-memory key; secrets will NOT survive this restart.", e.getMessage());
             try {
                 KeyGenerator kg = KeyGenerator.getInstance(AES_ALGO);
                 kg.init(256);
                 masterKey = kg.generateKey();
-                log.warn("[IntegrationConfig] MASTER_ENCRYPT_KEY not set — using ephemeral key. " +
-                        "Secrets will not survive restart. Set ecm.master-encrypt-key in production.");
-            } catch (Exception e) {
-                throw new IllegalStateException("Failed to generate ephemeral AES key", e);
+            } catch (Exception inner) {
+                throw new IllegalStateException("Failed to generate ephemeral AES key", inner);
             }
         }
     }
@@ -147,7 +160,7 @@ public class IntegrationConfigService {
         IntegrationConfig cfg = findOrEmpty(tenantId, SYSTEM_DOCUSIGN);
         Object encrypted = cfg.getSecrets().get(fieldName);
         if (encrypted == null) return null;
-        return decrypt(String.valueOf(encrypted));
+        return decryptOrNull(fieldName, String.valueOf(encrypted));
     }
 
     @Transactional(readOnly = true)
@@ -159,6 +172,73 @@ public class IntegrationConfigService {
     @Transactional(readOnly = true)
     public boolean isDocuSignEnabled(String tenantId) {
         return findOrEmpty(tenantId, SYSTEM_DOCUSIGN).getEnabled();
+    }
+
+    // ── Salesforce ───────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public SalesforceConfigResponse getSalesforce(String tenantId) {
+        IntegrationConfig cfg = findOrEmpty(tenantId, SYSTEM_SALESFORCE);
+        Map<String, Object> c = cfg.getConfig();
+        Map<String, Object> s = cfg.getSecrets();
+        return new SalesforceConfigResponse(
+                cfg.getEnabled(),
+                str(c, "login_url"),
+                str(c, "client_id"),
+                str(c, "contact_lookup_field"),
+                IntegrationConfigDto.masked(s.get("client_secret")),
+                cfg.getTestStatus(),
+                cfg.getTestedAt()
+        );
+    }
+
+    public SalesforceConfigResponse saveSalesforce(String tenantId, SalesforceConfigRequest req) {
+        IntegrationConfig cfg = findOrEmpty(tenantId, SYSTEM_SALESFORCE);
+
+        Map<String, Object> c = new HashMap<>(cfg.getConfig());
+        putIfNotNull(c, "login_url",             req.loginUrl());
+        putIfNotNull(c, "client_id",              req.clientId());
+        putIfNotNull(c, "contact_lookup_field",   req.contactLookupField());
+        cfg.setConfig(c);
+
+        Map<String, Object> s = new HashMap<>(cfg.getSecrets());
+        if (IntegrationConfigDto.shouldUpdateSecret(req.clientSecret())) {
+            s.put("client_secret", encrypt(req.clientSecret()));
+        }
+        cfg.setSecrets(s);
+
+        cfg.setEnabled(req.enabled());
+        cfg.setUpdatedAt(OffsetDateTime.now());
+        repo.save(cfg);
+
+        return getSalesforce(tenantId);
+    }
+
+    public void recordSalesforceTestResult(String tenantId, boolean success, String message) {
+        IntegrationConfig cfg = findOrEmpty(tenantId, SYSTEM_SALESFORCE);
+        cfg.setTestStatus(success ? "OK" : "FAILED");
+        cfg.setTestedAt(OffsetDateTime.now());
+        cfg.setUpdatedAt(OffsetDateTime.now());
+        repo.save(cfg);
+    }
+
+    @Transactional(readOnly = true)
+    public String getSalesforceSecret(String tenantId, String fieldName) {
+        IntegrationConfig cfg = findOrEmpty(tenantId, SYSTEM_SALESFORCE);
+        Object encrypted = cfg.getSecrets().get(fieldName);
+        if (encrypted == null) return null;
+        return decryptOrNull(fieldName, String.valueOf(encrypted));
+    }
+
+    @Transactional(readOnly = true)
+    public String getSalesforceConfigField(String tenantId, String fieldName) {
+        IntegrationConfig cfg = findOrEmpty(tenantId, SYSTEM_SALESFORCE);
+        return str(cfg.getConfig(), fieldName);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isSalesforceEnabled(String tenantId) {
+        return findOrEmpty(tenantId, SYSTEM_SALESFORCE).getEnabled();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -204,6 +284,28 @@ public class IntegrationConfigService {
                     + Base64.getEncoder().encodeToString(ciphertext);
         } catch (Exception e) {
             throw new IllegalStateException("AES-GCM encryption failed", e);
+        }
+    }
+
+    /**
+     * Decrypts a stored secret, treating failure the same as "not saved"
+     * rather than letting the exception escape. A decrypt failure here almost
+     * always means MASTER_ENCRYPT_KEY changed since the value was encrypted
+     * (e.g. an ephemeral dev key regenerated on restart) — callers like
+     * SalesforceClient.isConfigured() already treat a null secret as "not
+     * configured" and degrade gracefully. Letting the raw exception escape
+     * instead would poison the caller's ambient transaction (this bean is
+     * @Transactional), turning a recoverable config issue into an opaque
+     * UnexpectedRollbackException for whatever read-only transaction happened
+     * to be calling in — see CustomerProfileService.getProfile().
+     */
+    private String decryptOrNull(String fieldName, String encryptedValue) {
+        try {
+            return decrypt(encryptedValue);
+        } catch (Exception e) {
+            log.warn("[IntegrationConfig] Failed to decrypt secret '{}' — treating as unset. Likely cause: " +
+                    "MASTER_ENCRYPT_KEY changed since this was saved. Re-enter and save the secret to fix.", fieldName);
+            return null;
         }
     }
 

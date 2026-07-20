@@ -1,7 +1,9 @@
 package com.ecm.admin.controller;
 
+import com.ecm.admin.dto.CustomerCrmProfileDto;
 import com.ecm.admin.dto.PartyDto;
 import com.ecm.admin.dto.PartyRequest;
+import com.ecm.admin.service.CustomerProfileService;
 import com.ecm.admin.service.PartyService;
 import com.ecm.common.model.ApiResponse;
 import jakarta.validation.Valid;
@@ -39,6 +41,7 @@ import java.util.UUID;
 public class CustomerController {
 
     private final PartyService partyService;
+    private final CustomerProfileService customerProfileService;
 
     // ── List / Search ─────────────────────────────────────────────────────────
 
@@ -143,5 +146,25 @@ public class CustomerController {
     @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getPortfolio(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(partyService.getPortfolio(id)));
+    }
+
+    // ── CRM Profile (Customer 360 / form prefill) ──────────────────────────────
+
+    @GetMapping("/{id}/crm-profile")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:VIEW')")
+    public ResponseEntity<ApiResponse<CustomerCrmProfileDto>> getCrmProfile(@PathVariable String id) {
+        // Accepts either the internal party UUID or the external customer ref —
+        // the case-checklist "Fill Form" flow only carries the external ref.
+        return ResponseEntity.ok(ApiResponse.ok(customerProfileService.getProfileByIdOrExternalRef(id)));
+    }
+
+    @PutMapping("/{id}/crm-profile/{attributeKey}")
+    @PreAuthorize("hasPermission(null, 'CUSTOMER:UPDATE')")
+    public ResponseEntity<ApiResponse<Void>> setCrmProfileValue(
+            @PathVariable UUID id, @PathVariable String attributeKey,
+            @RequestBody CustomerCrmProfileDto.SetValueRequest req,
+            @AuthenticationPrincipal Jwt jwt) {
+        customerProfileService.setManualValue(id, attributeKey, req.getValue(), jwt.getSubject());
+        return ResponseEntity.ok(ApiResponse.ok(null, "Profile value updated"));
     }
 }

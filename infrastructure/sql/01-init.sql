@@ -829,6 +829,86 @@ CREATE TABLE ecm_admin.watch_folder_config (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Customer profile schema for CRM-populated form fill (Salesforce integration).
+-- See design note "CRM-Aware Form Fill & Customer 360" (2026-07-17).
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE ecm_admin.customer_profile_attributes (
+    id          SERIAL PRIMARY KEY,
+    key         VARCHAR(100)  NOT NULL UNIQUE,
+    label       VARCHAR(200)  NOT NULL,
+    value_type  VARCHAR(30)   NOT NULL DEFAULT 'STRING',
+    source      VARCHAR(20)   NOT NULL DEFAULT 'MANUAL',
+    sort_order  INTEGER       NOT NULL DEFAULT 0,
+    -- Comma-separated segment codes (RETAIL,SMB,COMMERCIAL); null/blank = all segments.
+    segments    VARCHAR(100),
+    is_active   BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_profile_attr_source CHECK (source IN ('MANUAL', 'CRM_MAPPED')),
+    CONSTRAINT ck_profile_attr_value_type CHECK (value_type IN ('STRING', 'DATE', 'EMAIL', 'PHONE', 'NUMBER'))
+);
+
+CREATE TABLE ecm_admin.customer_profile_attribute_mappings (
+    id                SERIAL PRIMARY KEY,
+    attribute_id      INTEGER NOT NULL UNIQUE
+                        REFERENCES ecm_admin.customer_profile_attributes(id) ON DELETE CASCADE,
+    salesforce_object VARCHAR(100) NOT NULL,
+    salesforce_field  VARCHAR(150) NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE ecm_admin.customer_relationship_types (
+    id                       SERIAL PRIMARY KEY,
+    name                     VARCHAR(100) NOT NULL UNIQUE,
+    salesforce_object        VARCHAR(100) NOT NULL,
+    salesforce_parent_field  VARCHAR(150) NOT NULL,
+    -- Salesforce object holding the customer's OWN record (Contact for Retail,
+    -- Account for SMB/Commercial) — resolved first since salesforce_parent_field
+    -- on the child object is a lookup storing a Salesforce Id, not the
+    -- customer's external ref string.
+    parent_object            VARCHAR(100) NOT NULL DEFAULT 'Contact',
+    -- Comma-separated segment codes (RETAIL,SMB,COMMERCIAL); null/blank = all segments.
+    segments                 VARCHAR(100),
+    sort_order               INTEGER NOT NULL DEFAULT 0,
+    is_active                BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE ecm_admin.customer_relationship_attributes (
+    id                    SERIAL PRIMARY KEY,
+    relationship_type_id  INTEGER NOT NULL
+                            REFERENCES ecm_admin.customer_relationship_types(id) ON DELETE CASCADE,
+    key                   VARCHAR(100) NOT NULL,
+    label                 VARCHAR(200) NOT NULL,
+    value_type            VARCHAR(30) NOT NULL DEFAULT 'STRING',
+    salesforce_field      VARCHAR(150) NOT NULL,
+    sort_order            INTEGER NOT NULL DEFAULT 0,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_rel_attr_key UNIQUE (relationship_type_id, key),
+    CONSTRAINT ck_rel_attr_value_type CHECK (value_type IN ('STRING', 'DATE', 'EMAIL', 'PHONE', 'NUMBER'))
+);
+
+CREATE INDEX idx_profile_attr_mappings_attr ON ecm_admin.customer_profile_attribute_mappings(attribute_id);
+CREATE INDEX idx_rel_attrs_type ON ecm_admin.customer_relationship_attributes(relationship_type_id);
+
+-- Per-customer values for MANUAL-source profile attributes.
+-- party_id is a soft ref → ecm_core.parties.id (cross-schema, no FK).
+CREATE TABLE ecm_admin.customer_profile_values (
+    id           SERIAL PRIMARY KEY,
+    party_id     UUID NOT NULL,
+    attribute_id INTEGER NOT NULL REFERENCES ecm_admin.customer_profile_attributes(id) ON DELETE CASCADE,
+    value        TEXT,
+    updated_by   VARCHAR(255),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_profile_value UNIQUE (party_id, attribute_id)
+);
+CREATE INDEX idx_profile_values_party ON ecm_admin.customer_profile_values(party_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_admin.departments  (convenience view over ecm_core.departments)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE VIEW ecm_admin.departments AS
@@ -1028,6 +1108,11 @@ CREATE UNIQUE INDEX idx_uq_published_form ON ecm_forms.form_definitions (tenant_
 CREATE INDEX idx_form_def_tenant   ON ecm_forms.form_definitions(tenant_id);
 CREATE INDEX idx_form_def_form_key ON ecm_forms.form_definitions(form_key);
 CREATE INDEX idx_form_def_status   ON ecm_forms.form_definitions(status);
+
+-- Note: form field ↔ customer-attribute binding (Layer 3 of CRM-aware form
+-- fill) lives INSIDE form_definitions.schema (JSONB) as FormField.customerAttributeKey
+-- — same place as every other field property (label, options, validation).
+-- No separate table needed; it's saved along with the rest of the form.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ecm_forms.form_submissions

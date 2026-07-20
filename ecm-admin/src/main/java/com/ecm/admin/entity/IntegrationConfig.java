@@ -60,9 +60,15 @@ public class IntegrationConfig {
     @Builder.Default
     private Map<String, Object> secrets = new HashMap<>();
 
-    /** OK | FAILED | null = never tested */
-    @Column(name = "test_status", length = 20)
-    private String testStatus;
+    /**
+     * UNTESTED | OK | FAILED.
+     * Must have a Java-level default matching the DB's DEFAULT 'UNTESTED' —
+     * without @Builder.Default, Hibernate sends an explicit NULL on insert,
+     * which overrides the column default and violates its NOT NULL constraint.
+     */
+    @Column(name = "test_status", length = 20, nullable = false)
+    @Builder.Default
+    private String testStatus = "UNTESTED";
 
     @Column(name = "tested_at")
     private OffsetDateTime testedAt;

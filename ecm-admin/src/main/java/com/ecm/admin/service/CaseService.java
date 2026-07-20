@@ -93,8 +93,13 @@ public class CaseService {
             params.add(partyId);
         }
         if (caseType != null && !caseType.isBlank()) {
-            where.append(" AND c.case_type = ?");
-            params.add(caseType);
+            // Comma-separated list supported additively (e.g. Customer 360's
+            // "LOAN_ORIGINATION,ACCOUNT_OPENING") — single value still works as before.
+            String[] types = caseType.split(",");
+            where.append(" AND c.case_type IN (")
+                    .append(String.join(",", java.util.Collections.nCopies(types.length, "?")))
+                    .append(")");
+            for (String t : types) params.add(t.trim());
         }
         if (assignedTo != null && !assignedTo.isBlank()) {
             where.append(" AND (c.assigned_to = ? OR c.claimed_by = ?)");
@@ -431,6 +436,40 @@ public class CaseService {
                 rs.getString("verified_by"),
                 rs.getObject("verified_at", OffsetDateTime.class)
         ), caseId);
+    }
+
+    /**
+     * Checklist grouped by document category, e.g. "Identity Document" → [passport, ...],
+     * "Financial Document" → [bank statement, ...]. Category data (categoryId, hierarchy)
+     * already existed on ChecklistItem/ProductDocumentType — this just resolves names and
+     * groups. Used by Customer 360's per-case view.
+     */
+    @Transactional(readOnly = true)
+    public List<CategoryGroup> getChecklistGroupedByCategory(UUID caseId) {
+        List<ChecklistItem> items = getChecklist(caseId);
+
+        Set<Integer> categoryIds = items.stream()
+                .map(ChecklistItem::categoryId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        Map<Integer, String> categoryNames = categoryIds.isEmpty() ? Map.of() : jdbc.query(
+                "SELECT id, name FROM ecm_admin.document_categories WHERE id = ANY(?)",
+                ps -> ps.setArray(1, jdbc.getDataSource().getConnection().createArrayOf("integer", categoryIds.toArray())),
+                rs -> {
+                    Map<Integer, String> m = new HashMap<>();
+                    while (rs.next()) m.put(rs.getInt("id"), rs.getString("name"));
+                    return m;
+                });
+
+        Map<Integer, List<ChecklistItem>> grouped = new LinkedHashMap<>();
+        for (ChecklistItem item : items) {
+            grouped.computeIfAbsent(item.categoryId(), k -> new ArrayList<>()).add(item);
+        }
+
+        List<CategoryGroup> result = new ArrayList<>();
+        grouped.forEach((categoryId, groupItems) -> result.add(new CategoryGroup(
+                categoryId,
+                categoryId == null ? "Uncategorized" : categoryNames.getOrDefault(categoryId, "Unknown"),
+                groupItems)));
+        return result;
     }
 
     /** Link an uploaded document to a checklist item */
